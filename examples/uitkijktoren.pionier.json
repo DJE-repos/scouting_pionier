@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "project": {
+    "id": "22222222-2222-4222-8222-222222222222",
+    "name": "Uitkijktoren",
+    "beams": [
+      { "id": "l1", "lengthM": 4, "diameterMm": 100, "position": [1, 2, 1], "quaternion": [0, 0, 0, 1], "stepIndex": 0 },
+      { "id": "l2", "lengthM": 4, "diameterMm": 100, "position": [-1, 2, 1], "quaternion": [0, 0, 0, 1], "stepIndex": 0 },
+      { "id": "l3", "lengthM": 4, "diameterMm": 100, "position": [1, 2, -1], "quaternion": [0, 0, 0, 1], "stepIndex": 0 },
+      { "id": "l4", "lengthM": 4, "diameterMm": 100, "position": [-1, 2, -1], "quaternion": [0, 0, 0, 1], "stepIndex": 0 },
+
+      { "id": "c1", "lengthM": 3, "diameterMm": 80, "position": [0, 3, 1], "quaternion": [0, 0, -0.7071068, 0.7071068], "stepIndex": 1 },
+      { "id": "c2", "lengthM": 3, "diameterMm": 80, "position": [0, 3, -1], "quaternion": [0, 0, -0.7071068, 0.7071068], "stepIndex": 1 },
+
+      { "id": "f1", "lengthM": 3, "diameterMm": 80, "position": [-1, 3.1, 0], "quaternion": [0.7071068, 0, 0, 0.7071068], "stepIndex": 2 },
+      { "id": "f2", "lengthM": 3, "diameterMm": 80, "position": [0, 3.1, 0], "quaternion": [0.7071068, 0, 0, 0.7071068], "stepIndex": 2 },
+      { "id": "f3", "lengthM": 3, "diameterMm": 80, "position": [1, 3.1, 0], "quaternion": [0.7071068, 0, 0, 0.7071068], "stepIndex": 2 },
+
+      { "id": "r1", "lengthM": 3, "diameterMm": 60, "position": [0, 4, 1], "quaternion": [0, 0, -0.7071068, 0.7071068], "stepIndex": 3 },
+      { "id": "r2", "lengthM": 3, "diameterMm": 60, "position": [0, 4, -1], "quaternion": [0, 0, -0.7071068, 0.7071068], "stepIndex": 3 }
+    ],
+    "lashings": [
+      { "id": "k1", "name": "kruissjorring", "beamIds": ["l1", "c1"], "localOffset": [0, 1, 0], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 1 },
+      { "id": "k2", "name": "kruissjorring", "beamIds": ["l2", "c1"], "localOffset": [0, 1, 0], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 1 },
+      { "id": "k3", "name": "kruissjorring", "beamIds": ["l3", "c2"], "localOffset": [0, 1, 0], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 1 },
+      { "id": "k4", "name": "kruissjorring", "beamIds": ["l4", "c2"], "localOffset": [0, 1, 0], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 1 },
+
+      { "id": "k5", "name": "kruissjorring", "beamIds": ["c1", "f1"], "localOffset": [-0.05, -1, 0], "ropeLengthM": 8, "color": "#0284c7", "stepIndex": 2 },
+      { "id": "k6", "name": "kruissjorring", "beamIds": ["c1", "f2"], "localOffset": [-0.05, 0, 0], "ropeLengthM": 8, "color": "#0284c7", "stepIndex": 2 },
+      { "id": "k7", "name": "kruissjorring", "beamIds": ["c1", "f3"], "localOffset": [-0.05, 1, 0], "ropeLengthM": 8, "color": "#0284c7", "stepIndex": 2 },
+      { "id": "k8", "name": "kruissjorring", "beamIds": ["c2", "f1"], "localOffset": [-0.05, -1, 0], "ropeLengthM": 8, "color": "#0284c7", "stepIndex": 2 },
+      { "id": "k9", "name": "kruissjorring", "beamIds": ["c2", "f2"], "localOffset": [-0.05, 0, 0], "ropeLengthM": 8, "color": "#0284c7", "stepIndex": 2 },
+      { "id": "k10", "name": "kruissjorring", "beamIds": ["c2", "f3"], "localOffset": [-0.05, 1, 0], "ropeLengthM": 8, "color": "#0284c7", "stepIndex": 2 },
+
+      { "id": "k11", "name": "mastworp", "beamIds": ["l1", "r1"], "localOffset": [0, 2, 0], "ropeLengthM": 2, "color": "#16a34a", "stepIndex": 3 },
+      { "id": "k12", "name": "mastworp", "beamIds": ["l2", "r1"], "localOffset": [0, 2, 0], "ropeLengthM": 2, "color": "#16a34a", "stepIndex": 3 },
+      { "id": "k13", "name": "mastworp", "beamIds": ["l3", "r2"], "localOffset": [0, 2, 0], "ropeLengthM": 2, "color": "#16a34a", "stepIndex": 3 },
+      { "id": "k14", "name": "mastworp", "beamIds": ["l4", "r2"], "localOffset": [0, 2, 0], "ropeLengthM": 2, "color": "#16a34a", "stepIndex": 3 }
+    ],
+    "assemblyInstances": [],
+    "steps": [
+      { "index": 0, "title": "Poten uitleggen" },
+      { "index": 1, "title": "Schoren aanbrengen" },
+      { "index": 2, "title": "Vloer leggen" },
+      { "index": 3, "title": "Leuning" }
+    ],
+    "settings": {
+      "showLabels": true,
+      "labelScale": 1,
+      "labelsForSelectionOnly": false,
+      "gridSnapM": 0.25,
+      "angleSnapDeg": 15,
+      "defaultDiameterMm": 80,
+      "ropeLengthByKnot": { "kruissjorring": 8, "mastworp": 2 }
+    }
+  },
+  "library": { "defs": [] }
+}

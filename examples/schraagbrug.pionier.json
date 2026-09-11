@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "project": {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "name": "Schraagbrug",
+    "beams": [
+      { "id": "g1", "lengthM": 4, "diameterMm": 100, "position": [-2, 0.05, 1], "quaternion": [0, 0, -0.7071068, 0.7071068], "stepIndex": 0 },
+      { "id": "g2", "lengthM": 4, "diameterMm": 100, "position": [-2, 0.05, -1], "quaternion": [0, 0, -0.7071068, 0.7071068], "stepIndex": 0 },
+      { "id": "g3", "lengthM": 3, "diameterMm": 80, "position": [-2, 0.16, 0], "quaternion": [0.7071068, 0, 0, 0.7071068], "stepIndex": 0 },
+
+      { "id": "s1", "lengthM": 4, "diameterMm": 100, "position": [2, 2, 1], "quaternion": [0, 0, 0, 1], "stepIndex": 1 },
+      { "id": "s2", "lengthM": 4, "diameterMm": 100, "position": [2, 2, -1], "quaternion": [0, 0, 0, 1], "stepIndex": 1 },
+      { "id": "s3", "lengthM": 3, "diameterMm": 80, "position": [2, 3, 0], "quaternion": [0.7071068, 0, 0, 0.7071068], "stepIndex": 1 },
+
+      { "id": "d1", "lengthM": 6, "diameterMm": 80, "position": [2, 3.2, 0], "quaternion": [0, 0, -0.7071068, 0.7071068], "stepIndex": 2 }
+    ],
+    "lashings": [
+      { "id": "gk1", "name": "kruissjorring", "beamIds": ["g1", "g3"], "localOffset": [0, 0, 0.11], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 0 },
+      { "id": "gk2", "name": "kruissjorring", "beamIds": ["g2", "g3"], "localOffset": [0, 0, 0.11], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 0 },
+
+      { "id": "sk1", "name": "kruissjorring", "beamIds": ["s1", "s3"], "localOffset": [0, 1, 0], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 1 },
+      { "id": "sk2", "name": "kruissjorring", "beamIds": ["s2", "s3"], "localOffset": [0, 1, 0], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 1 },
+
+      { "id": "dk1", "name": "mastworp", "beamIds": ["s1", "d1"], "localOffset": [0, 1.2, 0], "ropeLengthM": 2, "color": "#16a34a", "stepIndex": 2 },
+      { "id": "dk2", "name": "mastworp", "beamIds": ["s2", "d1"], "localOffset": [0, 1.2, 0], "ropeLengthM": 2, "color": "#16a34a", "stepIndex": 2 }
+    ],
+    "assemblyInstances": [],
+    "steps": [
+      { "index": 0, "title": "Schraag op de grond leggen", "temporary": true },
+      { "index": 1, "title": "Schraag opzetten" },
+      { "index": 2, "title": "Legger aanbrengen" }
+    ],
+    "settings": {
+      "showLabels": true,
+      "labelScale": 1,
+      "labelsForSelectionOnly": false,
+      "gridSnapM": 0.25,
+      "angleSnapDeg": 15,
+      "defaultDiameterMm": 80,
+      "ropeLengthByKnot": { "kruissjorring": 8, "mastworp": 2 }
+    }
+  },
+  "library": { "defs": [] }
+}

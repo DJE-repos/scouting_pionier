@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "project": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "name": "Testbrug",
+    "beams": [
+      { "id": "b1", "lengthM": 4, "diameterMm": 80, "position": [0, 1.5, 0], "quaternion": [0, 0, 0, 1], "stepIndex": 0 },
+      { "id": "b2", "lengthM": 4, "diameterMm": 80, "position": [0, 1.5, 0], "quaternion": [0, 0, 0.7071068, 0.7071068], "stepIndex": 0 },
+      { "id": "b3", "lengthM": 6, "diameterMm": 100, "position": [0, 3, 0], "quaternion": [0.7071068, 0, 0, 0.7071068], "stepIndex": 1 }
+    ],
+    "lashings": [
+      { "id": "k1", "name": "kruisbond", "beamIds": ["b1", "b2"], "localOffset": [0, 0, 0], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 0 },
+      { "id": "k2", "name": "diagonaalbond", "beamIds": ["b1", "b3"], "localOffset": [0, 1.5, 0], "ropeLengthM": 8, "color": "#e11d48", "stepIndex": 1 }
+    ],
+    "assemblyInstances": [],
+    "steps": [
+      { "index": 0, "title": "Schragen" },
+      { "index": 1, "title": "Legger" }
+    ],
+    "settings": {
+      "showLabels": true,
+      "labelScale": 1,
+      "labelsForSelectionOnly": false,
+      "gridSnapM": 0.25,
+      "angleSnapDeg": 15,
+      "defaultDiameterMm": 80,
+      "ropeLengthByKnot": { "kruisbond": 8, "diagonaalbond": 8 }
+    }
+  },
+  "library": { "defs": [] }
+}
