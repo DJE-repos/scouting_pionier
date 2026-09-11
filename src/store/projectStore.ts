@@ -80,6 +80,7 @@ interface EditorState {
   deleteSelected: () => void;
   select: (kind: 'beam' | 'lashing' | 'instance' | 'rope', id: string, additive: boolean) => void;
   selectMultiple: (selection: MultiSelection, additive?: boolean) => void;
+  selectAll: () => void;
   setSelection: (beamIds: string[]) => void;
   clearSelection: () => void;
 
@@ -567,6 +568,17 @@ export const useEditor = create<EditorState>()(
         for (const id of selection.ropeIds ?? []) ropeSet.add(id);
         s.selectedRopeIds = [...ropeSet];
       }),
+
+    selectAll: () => {
+      const state = get();
+      const model = resolveModel(state.project, state.library);
+      set((s) => {
+        s.selectedBeamIds = model.beams.map((beam) => beam.id);
+        s.selectedLashingIds = model.lashings.map((lashing) => lashing.id);
+        s.selectedInstanceIds = state.project.assemblyInstances.map((instance) => instance.id);
+        s.selectedRopeIds = model.ropes.map((rope) => rope.id);
+      });
+    },
 
     setSelection: (beamIds) =>
       set((s) => {

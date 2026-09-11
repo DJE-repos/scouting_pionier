@@ -408,7 +408,8 @@ export async function generateManual(
       const cumulative = resolveModel(project, library, step.index);
       const newBeams = cumulative.beams.filter((b) => b.stepIndex === step.index);
       const newKnots = cumulative.lashings.filter((l) => l.stepIndex === step.index);
-      if (newBeams.length === 0 && newKnots.length === 0) continue;
+      const newRopes = cumulative.ropes.filter((r) => r.stepIndex === step.index);
+      if (newBeams.length === 0 && newKnots.length === 0 && newRopes.length === 0) continue;
 
       options.setPreviewStep(step.index);
       await nextFrame();
@@ -479,6 +480,23 @@ export async function generateManual(
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(0);
         doc.text(`${letters.length}× ${name} leggen`, margin + 5 + prefixW + 3, sy);
+        sy += 5;
+      }
+
+      const ropeGroups = new Map<string, { count: number; totalLengthM: number }>();
+      for (const rope of newRopes) {
+        const name = rope.name ?? 'Touw';
+        const row = ropeGroups.get(name) ?? { count: 0, totalLengthM: 0 };
+        row.count += 1;
+        row.totalLengthM += rope.totalRopeM;
+        ropeGroups.set(name, row);
+      }
+      for (const [name, row] of ropeGroups) {
+        doc.text(
+          `${row.count}× ${name} spannen (${row.totalLengthM.toFixed(1)} m touw)`,
+          margin + 5,
+          sy,
+        );
         sy += 5;
       }
 

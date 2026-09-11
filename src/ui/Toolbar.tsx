@@ -161,6 +161,9 @@ export function Toolbar() {
         >
           Verwijderen
         </button>
+        <button className="btn" onClick={() => useEditor.getState().selectAll()}>
+          Selecteer alles
+        </button>
       </div>
 
       <div className="toolbar__group">

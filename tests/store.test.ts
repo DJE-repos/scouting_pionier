@@ -249,6 +249,25 @@ describe('assemblies', () => {
 });
 
 describe('touwen', () => {
+  it('selecteert alle objecttypen tegelijk', () => {
+    const a = store().addBeam(4, [0, 0, 0], alongX);
+    const b = store().addBeam(4, [0, 5, 0], alongX);
+
+    store().setSelection([a]);
+    const knot1 = store().createLashing('mastworp')!;
+    store().setSelection([b]);
+    const knot2 = store().createLashing('mastworp')!;
+    store().select('lashing', knot1, false);
+    store().select('lashing', knot2, true);
+    const ropeId = store().createRope()!;
+
+    store().selectAll();
+
+    expect(store().selectedBeamIds).toEqual([a, b]);
+    expect(store().selectedLashingIds).toEqual([knot1, knot2]);
+    expect(store().selectedRopeIds).toEqual([ropeId]);
+  });
+
   it('spant een touw tussen twee knopen', () => {
     const a = store().addBeam(4, [0, 0, 0], alongX);
     const b = store().addBeam(4, [0, 5, 0], alongX);
