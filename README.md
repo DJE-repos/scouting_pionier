@@ -28,10 +28,14 @@ npm run build    # productiebuild in dist/
 ## Panelen rechts
 
 - **Eigenschappen** — maten, diameter, knoopnaam, touwlengte, kleur
-- **Materiaal** — automatische materiaalstaat (balken per maat, touw per knoopsoort) + CSV-export
+- **Materiaal** — automatische materiaalstaat (balken per maat, touw per knoopsoort), tijdelijke maatregelen als losse categorie + CSV-export
 - **Stappen** — bouwstappen beheren; nieuwe elementen krijgen de actieve stap. Vink **Tussenstap**
   aan voor een onderdeel dat je eerst op de grond voorbouwt: dat materiaal staat elders al in het
-  model, telt dus niet mee in de materiaalstaat en is alleen in die ene stap zichtbaar. Met
+  model, telt dus niet mee in de materiaalstaat en is alleen in die ene stap zichtbaar. Markeer een
+  geselecteerde balk, knoop of touw als **Tijdelijke maatregel** wanneer deze wel nodig is maar apart
+  in de materiaalstaat moet staan. De geselecteerde **Bewerk- en voorbeeldstap** staat in de toolbar
+  en bepaalt waar verplaatsen en draaien wordt opgeslagen: eerdere stappen blijven ongewijzigd en
+  latere stappen erven de nieuwe positie. Met
   **Camera vastleggen** bepaal je per stap vanuit welke kant de drie aanzichten in de handleiding
   kijken; zonder eigen hoek geldt de projectstandaard
 - **Assemblies** — selectie opslaan als herbruikbare assembly, plaatsen en weer uit elkaar halen

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Viewport } from './scene/Viewport';
 import { Toolbar } from './ui/Toolbar';
 import { BeamPalette } from './ui/BeamPalette';
@@ -14,8 +14,27 @@ type Tab = (typeof TABS)[number];
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('Eigenschappen');
+  const [panelWidth, setPanelWidth] = useState(320);
+  const [isResizingPanel, setIsResizingPanel] = useState(false);
   const project = useEditor((s) => s.project);
   const library = useEditor((s) => s.library);
+
+  useEffect(() => {
+    if (!isResizingPanel) return;
+
+    const onPointerMove = (event: PointerEvent) => {
+      const nextWidth = Math.min(520, Math.max(260, window.innerWidth - event.clientX));
+      setPanelWidth(nextWidth);
+    };
+    const stopResizing = () => setIsResizingPanel(false);
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', stopResizing, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', stopResizing);
+    };
+  }, [isResizingPanel]);
 
   useEffect(() => {
     loadFromStorage().then((saved) => {
@@ -33,13 +52,23 @@ export default function App() {
   useKeyboardShortcuts();
 
   return (
-    <div className="app">
+    <div
+      className={isResizingPanel ? 'app app--resizing' : 'app'}
+      style={{ '--panel-width': `${panelWidth}px` } as CSSProperties}
+    >
       <Toolbar />
       <main className="app__body">
         <BeamPalette />
         <div className="viewport">
           <Viewport />
         </div>
+        <div
+          className="panel-resize-handle"
+          role="separator"
+          aria-label="Breedte van rechterpaneel aanpassen"
+          aria-orientation="vertical"
+          onPointerDown={() => setIsResizingPanel(true)}
+        />
         <aside className="panel panel--right">
           <nav className="tabs">
             {TABS.map((t) => (
@@ -93,7 +122,7 @@ function useKeyboardShortcuts() {
           store.updateSettings({ showLabels: !store.project.settings.showLabels });
           break;
         case 'k':
-          if (store.selectedBeamIds.length >= 1) {
+          if (store.selectedBeamIds.length >= 1 || store.selectedRopeIds.length >= 1) {
             window.dispatchEvent(new CustomEvent('pionier:open-knot-dialog'));
           }
           break;

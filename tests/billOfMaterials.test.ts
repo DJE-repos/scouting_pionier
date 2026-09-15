@@ -73,3 +73,35 @@ describe('materiaal uit tussenstappen', () => {
     expect(csv).toContain('Totaal;Balken;3;16 m');
   });
 });
+
+describe('tijdelijke maatregelen', () => {
+  it('houdt maatregelen apart van de reguliere materiaalstaat', () => {
+    const bom = computeBillOfMaterials({
+      ...model,
+      beams: [
+        ...model.beams,
+        { ...model.beams[0], id: 'm1', temporaryMeasure: true },
+      ],
+      lashings: [
+        ...model.lashings,
+        { ...model.lashings[0], id: 'mk', temporaryMeasure: true },
+      ],
+    });
+
+    expect(bom.totalBeams).toBe(3);
+    expect(bom.totalMeasureBeams).toBe(1);
+    expect(bom.totalKnots).toBe(3);
+    expect(bom.totalMeasureKnots).toBe(1);
+  });
+
+  it('schrijft maatregelen als eigen CSV-categorie', () => {
+    const bom = computeBillOfMaterials({
+      ...model,
+      beams: [{ ...model.beams[0], temporaryMeasure: true }],
+    });
+
+    expect(billOfMaterialsToCsv(bom)).toContain(
+      'Tijdelijke maatregel;Balk 4 m / 80 mm;1;4 m',
+    );
+  });
+});

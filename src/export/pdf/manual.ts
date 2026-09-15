@@ -3,10 +3,10 @@ import { Box3, Camera, Object3D, OrthographicCamera, PerspectiveCamera, Scene, V
 import type { AssemblyLibrary, Project } from '../../model/types';
 import { resolveModel, type ResolvedModel } from '../../model/resolve';
 import { beamEndpoints, beamLocalToWorld } from '../../model/geometry';
-import { beamColorHex, formatLength, hexToRgb } from '../../model/beamColors';
-import { anglesForStep, viewOrientation, type ViewAngles, type ViewName } from '../../model/views';
+import { beamColorHex, contrastTextHex, formatLength, hexToRgb } from '../../model/beamColors';
+import { anglesForStep, anglesFromDirection, viewOrientation, type ViewAngles, type ViewName } from '../../model/views';
 import { computeBillOfMaterials } from '../billOfMaterials';
-import { getCanvasHandle } from '../../scene/snapshot';
+import { currentViewDirection, getCanvasHandle } from '../../scene/snapshot';
 
 /** Rendergroottes, afgestemd op de beeldverhouding van het vak in de PDF. */
 const VIEW_SIZE = {
@@ -27,9 +27,44 @@ function modelBounds(model: ResolvedModel): Box3 {
   return box;
 }
 
+/**
+ * Kader rond wat er in deze stap bijkomt of verandert, op de plek waar het model in deze
+ * stap daadwerkelijk staat. Zo blijft de constructie in beeld, ook als een latere stap
+ * de elementen elders neerzet (stepTransforms).
+ */
+function stepFocusBounds(
+  cumulative: ResolvedModel,
+  newBeams: ResolvedModel['beams'],
+  newKnots: ResolvedModel['lashings'],
+  newRopes: ResolvedModel['ropes'],
+): Box3 {
+  const box = new Box3();
+  const beamById = new Map(cumulative.beams.map((b) => [b.id, b]));
+  for (const beam of newBeams) {
+    const [a, b] = beamEndpoints(beam);
+    box.expandByPoint(a);
+    box.expandByPoint(b);
+  }
+  for (const lashing of newKnots) {
+    for (const beamId of lashing.beamIds) {
+      const beam = beamById.get(beamId);
+      if (!beam) continue;
+      const [a, b] = beamEndpoints(beam);
+      box.expandByPoint(a);
+      box.expandByPoint(b);
+    }
+  }
+  for (const rope of newRopes) {
+    box.expandByPoint(new Vector3(...rope.fromPosition));
+    box.expandByPoint(new Vector3(...rope.toPosition));
+  }
+  return box.isEmpty() ? modelBounds(cumulative) : box;
+}
+
 interface KnotLabel {
   position: Vector3;
   text: string;
+  color: string;
 }
 
 interface RenderedView {
@@ -137,10 +172,15 @@ function cameraForView(view: ViewName, box: Box3, angles: ViewAngles, aspect: nu
 }
 
 /** Maaiveld en raster zijn hulpmiddelen in de app; in het boekje leiden ze alleen af. */
-function withoutSceneHelpers<T>(scene: Scene, render: () => T): T {
+function withoutSceneHelpers<T>(scene: Scene, render: () => T, includeContext = true): T {
   const hidden: Object3D[] = [];
   scene.traverse((object) => {
-    if ((object.name === 'ground' || object.name === 'grid') && object.visible) {
+    if (
+      (object.name === 'ground' || object.name === 'grid' || object.name === 'measurement-overlay' ||
+        (!includeContext &&
+          (object.name === 'context-object' || object.name === 'georeference-context'))) &&
+      object.visible
+    ) {
       object.visible = false;
       hidden.push(object);
     }
@@ -160,6 +200,7 @@ function renderView(
   size: { width: number; height: number } = VIEW_SIZE.wide,
   labelZoom = 1,
   quality = 0.85,
+  includeContext = true,
 ): RenderedView | null {
   const handle = getCanvasHandle();
   if (!handle) return null;
@@ -168,7 +209,7 @@ function renderView(
   const camera = cameraForView(view, box, angles, aspect);
 
   handle.gl.setSize(size.width, size.height, false);
-  withoutSceneHelpers(handle.scene, () => handle.gl.render(handle.scene, camera));
+  withoutSceneHelpers(handle.scene, () => handle.gl.render(handle.scene, camera), includeContext);
   const source = handle.gl.domElement;
   if (labels.length === 0) return { dataUrl: source.toDataURL('image/jpeg', quality), aspect };
 
@@ -239,13 +280,13 @@ function drawKnotLabels(
     y = Math.max(radius + 1, Math.min(y, canvas.height - radius - 1));
     placed.push({ x, y, r: radius });
 
-    ctx.strokeStyle = '#b45309';
+    ctx.strokeStyle = label.color;
     ctx.beginPath();
     ctx.moveTo(anchorX, anchorY);
     ctx.lineTo(x, y + radius);
     ctx.stroke();
 
-    ctx.fillStyle = '#b45309';
+    ctx.fillStyle = label.color;
     ctx.beginPath();
     ctx.arc(anchorX, anchorY, ctx.lineWidth * 1.8, 0, Math.PI * 2);
     ctx.fill();
@@ -256,7 +297,7 @@ function drawKnotLabels(
     ctx.strokeStyle = '#ffffff';
     ctx.stroke();
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = contrastTextHex(label.color);
     ctx.fillText(label.text, x, y + fontSize * 0.06);
   }
 
@@ -292,6 +333,7 @@ function knotLabels(model: ResolvedModel, knots: ResolvedModel['lashings']): Kno
       {
         position: beamLocalToWorld(anchor, lashing.localOffset),
         text: letterFor(i),
+        color: lashing.color,
       },
     ];
   });
@@ -347,6 +389,8 @@ export async function generateManual(
   const fullBounds = modelBounds(fullModel);
   const bom = computeBillOfMaterials(fullModel);
   const defaultAngles = anglesForStep(undefined, project.settings);
+  const liveCameraDirection = currentViewDirection();
+  const coverAngles = liveCameraDirection ? anglesFromDirection(liveCameraDirection) : defaultAngles;
 
   try {
     // --- voorblad ---
@@ -359,7 +403,7 @@ export async function generateManual(
     doc.setFontSize(10);
     doc.text(`Bouwhandleiding · ${new Date().toLocaleDateString('nl-NL')}`, margin, 38);
 
-    const cover = renderView('Isometrisch', fullBounds, defaultAngles);
+    const cover = renderView('Isometrisch', fullBounds, coverAngles);
     let y = placeImage(doc, cover, margin, 44, contentW, 110) + 8;
 
     doc.setFontSize(12);
@@ -391,6 +435,25 @@ export async function generateManual(
       y += 5;
     }
     doc.text(`Totaal touw: ${bom.totalRopeM.toFixed(1)} m`, margin, y);
+    if (bom.totalMeasureBeams > 0 || bom.totalMeasureKnots > 0 || bom.totalMeasureRopes > 0) {
+      y += 8;
+      doc.setFontSize(12);
+      doc.text('Tijdelijke maatregelen', margin, y);
+      y += 6;
+      doc.setFontSize(9);
+      for (const row of bom.measureBeams) {
+        doc.text(`${row.count}x tijdelijke balk ${row.lengthM} m (Ø${row.diameterMm} mm)`, margin, y);
+        y += 4;
+      }
+      for (const row of bom.measureKnots) {
+        doc.text(`${row.count}x tijdelijke ${row.name} - ${row.totalRopeM.toFixed(1)} m touw`, margin, y);
+        y += 4;
+      }
+      for (const row of bom.measureRopes) {
+        doc.text(`${row.count}x tijdelijk touw ${row.name} - ${row.totalRopeM.toFixed(1)} m`, margin, y);
+        y += 4;
+      }
+    }
     if (bom.totalTemporaryBeams > 0 || bom.totalTemporaryKnots > 0) {
       y += 8;
       doc.setFontSize(9);
@@ -409,7 +472,6 @@ export async function generateManual(
       const newBeams = cumulative.beams.filter((b) => b.stepIndex === step.index);
       const newKnots = cumulative.lashings.filter((l) => l.stepIndex === step.index);
       const newRopes = cumulative.ropes.filter((r) => r.stepIndex === step.index);
-      if (newBeams.length === 0 && newKnots.length === 0 && newRopes.length === 0) continue;
 
       options.setPreviewStep(step.index);
       await nextFrame();
@@ -417,19 +479,28 @@ export async function generateManual(
 
       doc.addPage();
       doc.setFontSize(18);
-      doc.text(`${step.index + 1}. ${step.title}${step.temporary ? ' (tussenstap)' : ''}`, margin, 20);
+      const stepLabel = step.index === 0 ? step.title : `${step.index}. ${step.title}`;
+      doc.text(`${stepLabel}${step.temporary ? ' (tussenstap)' : ''}`, margin, 20);
 
       let sy = 26;
+      if (step.description?.trim()) {
+        doc.setFontSize(10);
+        const description = doc.splitTextToSize(step.description.trim(), contentW);
+        doc.text(description, margin, sy);
+        sy += description.length * 4.5 + 2;
+      }
       sy += drawLegend(doc, margin, sy, usedLengths(cumulative), contentW);
 
       const labels = knotLabels(cumulative, newKnots);
       const angles = anglesForStep(step, project.settings);
-      const iso = renderView('Isometrisch', fullBounds, angles, labels);
+      const includeContext = step.includeContext ?? false;
+      const stepBounds = stepFocusBounds(cumulative, newBeams, newKnots, newRopes);
+      const iso = renderView('Isometrisch', stepBounds, angles, labels, VIEW_SIZE.wide, 1, 0.85, includeContext);
       sy = placeImage(doc, iso, margin, sy, contentW, 100) + 5;
 
       const half = (contentW - 5) / 2;
-      const top = renderView('Bovenaanzicht', fullBounds, angles, labels, VIEW_SIZE.half, 1.25, 0.8);
-      const front = renderView('Vooraanzicht', fullBounds, angles, labels, VIEW_SIZE.half, 1.25, 0.8);
+      const top = renderView('Bovenaanzicht', stepBounds, angles, labels, VIEW_SIZE.half, 1.25, 0.8, includeContext);
+      const front = renderView('Vooraanzicht', stepBounds, angles, labels, VIEW_SIZE.half, 1.25, 0.8, includeContext);
       const bottom = Math.max(
         placeImage(doc, top, margin, sy, half, 60),
         placeImage(doc, front, margin + half + 5, sy, half, 60),
@@ -465,21 +536,29 @@ export async function generateManual(
         sy += 5;
       }
 
-      const knotGroups = new Map<string, string[]>();
+      const knotGroups = new Map<string, { letter: string; color: string }[]>();
       newKnots.forEach((l, i) => {
         const letters = knotGroups.get(l.name) ?? [];
-        letters.push(letterFor(i));
+        letters.push({ letter: letterFor(i), color: l.color });
         knotGroups.set(l.name, letters);
       });
       for (const [name, letters] of knotGroups) {
-        const prefix = letters.join(', ');
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(180, 83, 9);
-        doc.text(prefix, margin + 5, sy);
-        const prefixW = doc.getTextWidth(prefix);
+        let prefixX = margin + 5;
+        letters.forEach(({ letter, color }, index) => {
+          const [r, g, b] = hexToRgb(color);
+          doc.setTextColor(r, g, b);
+          doc.text(letter, prefixX, sy);
+          prefixX += doc.getTextWidth(letter);
+          if (index < letters.length - 1) {
+            doc.setTextColor(0);
+            doc.text(', ', prefixX, sy);
+            prefixX += doc.getTextWidth(', ');
+          }
+        });
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(0);
-        doc.text(`${letters.length}× ${name} leggen`, margin + 5 + prefixW + 3, sy);
+        doc.text(`${letters.length}× ${name} leggen`, prefixX + 3, sy);
         sy += 5;
       }
 

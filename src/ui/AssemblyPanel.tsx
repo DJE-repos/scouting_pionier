@@ -8,6 +8,7 @@ export function AssemblyPanel() {
   const addAssemblyInstance = useEditor((s) => s.addAssemblyInstance);
   const deleteAssemblyDef = useEditor((s) => s.deleteAssemblyDef);
   const [name, setName] = useState('');
+  const [temporaryMeasure, setTemporaryMeasure] = useState(false);
 
   return (
     <div className="panel__body">
@@ -24,12 +25,21 @@ export function AssemblyPanel() {
           onChange={(e) => setName(e.target.value)}
         />
       </label>
+      <label className="field field--check">
+        <input
+          type="checkbox"
+          checked={temporaryMeasure}
+          onChange={(e) => setTemporaryMeasure(e.target.checked)}
+        />
+        <span>Tijdelijke maatregel</span>
+      </label>
       <button
         className="btn btn--primary"
         disabled={!name.trim() || selectedBeamIds.length === 0}
         onClick={() => {
-          saveSelectionAsAssembly(name.trim());
+          saveSelectionAsAssembly(name.trim(), temporaryMeasure);
           setName('');
+          setTemporaryMeasure(false);
         }}
       >
         Opslaan uit selectie ({selectedBeamIds.length})
@@ -44,6 +54,7 @@ export function AssemblyPanel() {
               <strong>{def.name}</strong>
               <span className="hint">
                 {def.beams.length} balken · {def.lashings.length} knopen
+                {def.temporaryMeasure && ' · tijdelijke maatregel'}
               </span>
             </div>
             <div className="step__actions">

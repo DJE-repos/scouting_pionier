@@ -125,4 +125,21 @@ describe('screenBox and drag select helpers', () => {
     expect(screenPos.y).toBeCloseTo(300);
     expect(screenPos.inFront).toBe(true);
   });
+
+  it('houdt rekening met de perspectiefdeling bij off-center punten', () => {
+    const camera = new PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.set(0, 0, 10);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+
+    const point = new Vector3(2, 0, 0);
+    const screenPos = projectToScreen(point, camera, 800, 600);
+    const expected = point.clone().project(camera);
+    const expectedX = ((expected.x + 1) / 2) * 800;
+    const expectedY = ((-expected.y + 1) / 2) * 600;
+
+    expect(screenPos.x).toBeCloseTo(expectedX);
+    expect(screenPos.y).toBeCloseTo(expectedY);
+    expect(screenPos.inFront).toBe(true);
+  });
 });

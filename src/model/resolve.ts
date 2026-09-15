@@ -7,8 +7,16 @@ import type {
   Lashing,
   Project,
   Rope,
+  StepTransform,
 } from './types';
-import { beamLocalToWorld, toQuat, toVec3 } from './geometry';
+import {
+  beamLocalToWorld,
+  ropeLocalToWorld,
+  toQuat,
+  toVec3,
+  worldToBeamLocal,
+  worldToRopeLocal,
+} from './geometry';
 
 export interface ResolvedBeam extends Beam {
   /** Gezet wanneer de balk uit een assembly-instantie komt (niet los bewerkbaar). */
@@ -45,6 +53,7 @@ export function instantiate(
 ): { beams: Beam[]; lashings: Lashing[]; ropes: Rope[] } {
   const idMap = new Map<string, string>();
   const knotIdMap = new Map<string, string>();
+  const ropeIdMap = new Map<string, string>();
   const offset = new Vector3(...instance.position);
   const rotation = new Quaternion(...instance.quaternion);
 
@@ -60,6 +69,16 @@ export function instantiate(
     };
   });
 
+  const rawRopes = (def.ropes ?? []).map((r) => {
+    const id = `${instance.id}:${r.id}`;
+    ropeIdMap.set(r.id, id);
+    return {
+      ...r,
+      id,
+      stepIndex: instance.stepIndex,
+    };
+  });
+
   const lashings = def.lashings.map((l) => {
     const id = `${instance.id}:${l.id}`;
     knotIdMap.set(l.id, id);
@@ -67,16 +86,15 @@ export function instantiate(
       ...l,
       id,
       beamIds: l.beamIds.map((bid) => idMap.get(bid) ?? bid),
+      ropeIds: l.ropeIds?.map((rid) => ropeIdMap.get(rid) ?? rid),
       stepIndex: instance.stepIndex,
     };
   });
 
-  const ropes = (def.ropes ?? []).map((r) => ({
+  const ropes = rawRopes.map((r) => ({
     ...r,
-    id: `${instance.id}:${r.id}`,
     fromKnotId: knotIdMap.get(r.fromKnotId) ?? r.fromKnotId,
     toKnotId: knotIdMap.get(r.toKnotId) ?? r.toKnotId,
-    stepIndex: instance.stepIndex,
   }));
 
   return { beams, lashings, ropes };
@@ -84,6 +102,32 @@ export function instantiate(
 
 export function temporarySteps(project: Project): Set<number> {
   return new Set(project.steps.filter((s) => s.temporary).map((s) => s.index));
+}
+
+function latestTransform(transforms: StepTransform[] | undefined, upToStep: number | null) {
+  if (!transforms?.length) return undefined;
+  return transforms
+    .filter((transform) => upToStep === null || transform.stepIndex <= upToStep)
+    .sort((a, b) => b.stepIndex - a.stepIndex)[0];
+}
+
+export function resolveStepTransform<
+  T extends {
+    position: [number, number, number];
+    quaternion: [number, number, number, number];
+    stepTransforms?: StepTransform[];
+  },
+>(
+  item: T,
+  upToStep: number | null,
+): T {
+  const transform = latestTransform(item.stepTransforms, upToStep);
+  if (!transform) return item;
+  return {
+    ...item,
+    position: transform.position ?? item.position,
+    quaternion: transform.quaternion ?? item.quaternion,
+  };
 }
 
 /** Vlakke lijst van alles in het project, met assembly-instanties uitgeklapt. */
@@ -98,7 +142,7 @@ export function resolveModel(
     temporary: temp.has(item.stepIndex),
   });
 
-  const beams: ResolvedBeam[] = project.beams.map(mark);
+  const beams: ResolvedBeam[] = project.beams.map((beam) => mark(resolveStepTransform(beam, upToStep)));
   const lashings: ResolvedLashing[] = project.lashings.map(mark);
   const rawRopes: (Rope & { instanceId?: string; temporary: boolean })[] = (project.ropes ?? []).map(
     mark,
@@ -107,48 +151,93 @@ export function resolveModel(
   for (const instance of project.assemblyInstances) {
     const def = library.defs.find((d) => d.id === instance.defId);
     if (!def) continue;
-    const expanded = instantiate(def, instance);
+    const expanded = instantiate(def, resolveStepTransform(instance, upToStep));
     beams.push(
       ...expanded.beams.map((b) => ({
         ...mark(b),
+        temporaryMeasure: def.temporaryMeasure || b.temporaryMeasure,
         instanceId: instance.id,
         assemblyName: def.name,
       })),
     );
-    lashings.push(...expanded.lashings.map((l) => ({ ...mark(l), instanceId: instance.id })));
-    rawRopes.push(...expanded.ropes.map((r) => ({ ...mark(r), instanceId: instance.id })));
+    lashings.push(...expanded.lashings.map((l) => ({ ...mark(l), temporaryMeasure: def.temporaryMeasure || l.temporaryMeasure, instanceId: instance.id })));
+    rawRopes.push(...expanded.ropes.map((r) => ({ ...mark(r), temporaryMeasure: def.temporaryMeasure || r.temporaryMeasure, instanceId: instance.id })));
   }
 
   const knotPositionMap = new Map<string, Vector3>();
-  for (const l of lashings) {
-    const anchor = beams.find((b) => b.id === l.beamIds[0]);
-    if (anchor) {
-      knotPositionMap.set(l.id, beamLocalToWorld(anchor, l.localOffset));
-    }
-  }
-
   const ropes: ResolvedRope[] = [];
-  for (const r of rawRopes) {
-    const p1 = knotPositionMap.get(r.fromKnotId);
-    const p2 = knotPositionMap.get(r.toKnotId);
-    if (!p1 || !p2) continue;
-    const lengthM = Math.round(p1.distanceTo(p2) * 100) / 100;
-    const extra = r.extraLengthM ?? 1;
-    const totalRopeM = Math.round((lengthM + extra) * 100) / 100;
-    ropes.push({
-      ...r,
-      lengthM,
-      totalRopeM,
-      fromPosition: toVec3(p1),
-      toPosition: toVec3(p2),
-    });
+  const resolvedRopeMap = new Map<string, ResolvedRope>();
+
+  let progress = true;
+  while (progress) {
+    progress = false;
+
+    for (const l of lashings) {
+      if (knotPositionMap.has(l.id)) continue;
+
+      let pos: Vector3 | null = null;
+      if (l.beamIds && l.beamIds.length > 0) {
+        const anchor = beams.find((b) => b.id === l.beamIds[0]);
+        if (anchor) {
+          const transform = latestTransform(l.stepTransforms, upToStep);
+          const localOffset = transform?.position
+            ? worldToBeamLocal(anchor, new Vector3(...transform.position))
+            : l.localOffset;
+          l.localOffset = localOffset;
+          pos = beamLocalToWorld(anchor, localOffset);
+        }
+      } else if (l.ropeIds && l.ropeIds.length > 0) {
+        const anchorRope = resolvedRopeMap.get(l.ropeIds[0]);
+        if (anchorRope) {
+          const transform = latestTransform(l.stepTransforms, upToStep);
+          const p1 = new Vector3(...anchorRope.fromPosition);
+          const p2 = new Vector3(...anchorRope.toPosition);
+          const localOffset = transform?.position
+            ? worldToRopeLocal(p1, p2, new Vector3(...transform.position))
+            : l.localOffset;
+          l.localOffset = localOffset;
+          pos = ropeLocalToWorld(p1, p2, localOffset);
+        }
+      }
+
+      if (pos) {
+        knotPositionMap.set(l.id, pos);
+        progress = true;
+      }
+    }
+
+    for (const r of rawRopes) {
+      if (resolvedRopeMap.has(r.id)) continue;
+
+      const p1 = knotPositionMap.get(r.fromKnotId);
+      const p2 = knotPositionMap.get(r.toKnotId);
+      if (p1 && p2) {
+        const lengthM = Math.round(p1.distanceTo(p2) * 100) / 100;
+        const extra = r.extraLengthM ?? 1;
+        const totalRopeM = Math.round((lengthM + extra) * 100) / 100;
+        const resolvedRope: ResolvedRope = {
+          ...r,
+          lengthM,
+          totalRopeM,
+          fromPosition: toVec3(p1),
+          toPosition: toVec3(p2),
+        };
+        ropes.push(resolvedRope);
+        resolvedRopeMap.set(r.id, resolvedRope);
+        progress = true;
+      }
+    }
   }
 
   if (upToStep === null) return { beams, lashings, ropes };
 
   // Voorgebouwde onderdelen horen alleen bij hun eigen stap; daarna staat het echte werk er.
-  const visible = <T extends { stepIndex: number; temporary: boolean }>(item: T) =>
-    item.temporary ? item.stepIndex === upToStep : item.stepIndex <= upToStep;
+  const visible = <T extends { stepIndex: number; temporary: boolean; removedAtStep?: number }>(item: T) =>
+    item.removedAtStep !== undefined && item.removedAtStep <= upToStep
+      ? false
+      : item.temporary
+        ? item.stepIndex === upToStep
+        : item.stepIndex <= upToStep;
 
   return {
     beams: beams.filter(visible),

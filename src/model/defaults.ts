@@ -39,6 +39,11 @@ export const defaultSettings = (): ProjectSettings => ({
   ropeLengthByKnot: { ...DEFAULT_ROPE_LENGTHS },
   viewAzimuthDeg: 45,
   viewElevationDeg: 30,
+  georeferenceEnabled: false,
+  georeferenceX: 93274,
+  georeferenceY: 393183,
+  georeferenceImagery: true,
+  georeferenceBuildings: true,
 });
 
 export const newProject = (name = 'Nieuw pionierproject'): Project => ({
@@ -48,7 +53,9 @@ export const newProject = (name = 'Nieuw pionierproject'): Project => ({
   lashings: [],
   ropes: [],
   assemblyInstances: [],
-  steps: [{ index: 0, title: 'Stap 1' }],
+  measurements: [],
+  contextObjects: [],
+  steps: [{ index: 0, title: 'Vertrekpunt', includeContext: true }],
   settings: defaultSettings(),
 });
 

@@ -3,10 +3,12 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { Vector3 } from 'three';
 import { useEditor } from '../store/projectStore';
 import { resolveModel } from '../model/resolve';
-import { beamLocalToWorld } from '../model/geometry';
+import { beamEndpoints, beamLocalToWorld, projectToScreen, ropeLocalToWorld } from '../model/geometry';
 import { contrastTextHex } from '../model/beamColors';
+import { layoutLabels, type ScreenSegment } from './labelLayout';
 
 interface LabelEntry {
+  id: string;
   anchor: Vector3;
   el: HTMLDivElement | null;
   line: SVGLineElement | null;
@@ -17,7 +19,6 @@ interface LabelEntry {
 /** Gedeeld tussen de DOM-laag en de projector in de canvas. */
 const registry = new Map<string, LabelEntry>();
 
-const BASE_OFFSET_PX = 26;
 const GAP_PX = 4;
 
 interface LabelItem {
@@ -29,18 +30,35 @@ interface LabelItem {
   highlighted: boolean;
 }
 
-function useLabelItems(): LabelItem[] {
+interface LabelData {
+  items: LabelItem[];
+  obstacles: [Vector3, Vector3][];
+}
+
+function useLabelItems(): LabelData {
   const project = useEditor((s) => s.project);
   const library = useEditor((s) => s.library);
   const previewStep = useEditor((s) => s.previewStep);
   const selectedBeamIds = useEditor((s) => s.selectedBeamIds);
   const selectedLashingIds = useEditor((s) => s.selectedLashingIds);
+  const selectedRopeIds = useEditor((s) => s.selectedRopeIds);
   const settings = project.settings;
 
   return useMemo(() => {
-    if (!settings.showLabels) return [];
-    const model = resolveModel(project, library);
+    if (!settings.showLabels) return { items: [], obstacles: [] };
+    const model = resolveModel(project, library, previewStep);
     const items: LabelItem[] = [];
+
+    // Knopen die als begin- of eindpunt horen bij geselecteerde touwen
+    const endpointKnotIds = new Set<string>();
+    if (selectedRopeIds.length > 0) {
+      for (const rope of model.ropes) {
+        if (selectedRopeIds.includes(rope.id)) {
+          if (rope.fromKnotId) endpointKnotIds.add(rope.fromKnotId);
+          if (rope.toKnotId) endpointKnotIds.add(rope.toKnotId);
+        }
+      }
+    }
 
     for (const lashing of model.lashings) {
       if (previewStep === null) {
@@ -51,32 +69,65 @@ function useLabelItems(): LabelItem[] {
         continue;
       }
       const selected = selectedLashingIds.includes(lashing.id);
+      const isAttachedToSelectedBeam = lashing.beamIds.some((id) => selectedBeamIds.includes(id));
+      const isAnchorOfSelectedRope = Boolean(
+        lashing.ropeIds && lashing.ropeIds.some((id) => selectedRopeIds.includes(id)),
+      );
+      const isEndpointOfSelectedRope = endpointKnotIds.has(lashing.id);
+
       if (
         settings.labelsForSelectionOnly &&
         !selected &&
-        !lashing.beamIds.some((id) => selectedBeamIds.includes(id))
+        !isAttachedToSelectedBeam &&
+        !isAnchorOfSelectedRope &&
+        !isEndpointOfSelectedRope
       )
         continue;
 
-      const anchorBeam = model.beams.find((b) => b.id === lashing.beamIds[0]);
-      if (!anchorBeam) continue;
+      let anchorPos: Vector3 | null = null;
+      const anchorBeam = lashing.beamIds?.length
+        ? model.beams.find((b) => b.id === lashing.beamIds[0])
+        : undefined;
+      if (anchorBeam) {
+        anchorPos = beamLocalToWorld(anchorBeam, lashing.localOffset);
+      } else if (lashing.ropeIds && lashing.ropeIds.length > 0) {
+        const anchorRope = model.ropes.find((r) => r.id === lashing.ropeIds![0]);
+        if (anchorRope) {
+          anchorPos = ropeLocalToWorld(
+            new Vector3(...anchorRope.fromPosition),
+            new Vector3(...anchorRope.toPosition),
+            lashing.localOffset,
+          );
+        }
+      }
+      if (!anchorPos) continue;
 
       items.push({
         id: lashing.id,
         text: lashing.name,
         color: lashing.color,
-        anchor: beamLocalToWorld(anchorBeam, lashing.localOffset),
+        anchor: anchorPos,
         selected,
         highlighted: previewStep !== null && lashing.stepIndex === previewStep,
       });
     }
-    return items;
-  }, [project, library, previewStep, selectedBeamIds, selectedLashingIds, settings]);
+    const obstacles: [Vector3, Vector3][] = [
+      ...model.beams
+        .filter((b) => !b.temporary || b.stepIndex === previewStep)
+        .map((beam) => beamEndpoints(beam)),
+      ...model.ropes
+        .filter((r) => !r.temporary || r.stepIndex === previewStep)
+        .map(
+          (rope) => [new Vector3(...rope.fromPosition), new Vector3(...rope.toPosition)] as [Vector3, Vector3],
+        ),
+    ];
+    return { items, obstacles };
+  }, [project, library, previewStep, selectedBeamIds, selectedLashingIds, selectedRopeIds, settings]);
 }
 
 /** DOM-laag over de canvas; staat buiten de Canvas zodat tekst scherp blijft. */
 export function KnotLabelLayer() {
-  const items = useLabelItems();
+  const { items } = useLabelItems();
   const labelScale = useEditor((s) => s.project.settings.labelScale);
 
   useLayoutEffect(() => {
@@ -91,6 +142,7 @@ export function KnotLabelLayer() {
 
   const bind = (item: LabelItem) => (el: HTMLDivElement | null) => {
     const entry = registry.get(item.id) ?? {
+      id: item.id,
       anchor: item.anchor,
       el: null,
       line: null,
@@ -134,10 +186,15 @@ export function KnotLabelLayer() {
 export function KnotLabelProjector() {
   const { camera, size } = useThree();
   const scratch = useRef(new Vector3());
+  const { obstacles } = useLabelItems();
 
   useFrame(() => {
-    type Placed = { entry: LabelEntry; x: number; y: number; anchorX: number; anchorY: number };
-    const placed: Placed[] = [];
+    const obstacleSegments: ScreenSegment[] = obstacles.flatMap(([from, to]) => {
+      const start = projectToScreen(from, camera, size.width, size.height);
+      const end = projectToScreen(to, camera, size.width, size.height);
+      return start.inFront || end.inFront ? [{ from: { x: start.x, y: start.y }, to: { x: end.x, y: end.y } }] : [];
+    });
+    const inputs: { id: string; anchor: { x: number; y: number }; width: number; height: number; entry: LabelEntry }[] = [];
 
     for (const entry of registry.values()) {
       if (!entry.el) continue;
@@ -152,42 +209,19 @@ export function KnotLabelProjector() {
 
       const anchorX = (ndc.x * 0.5 + 0.5) * size.width;
       const anchorY = (-ndc.y * 0.5 + 0.5) * size.height;
-      placed.push({
-        entry,
-        x: anchorX - entry.width / 2,
-        y: anchorY - BASE_OFFSET_PX - entry.height,
-        anchorX,
-        anchorY,
-      });
+      inputs.push({ id: entry.id, anchor: { x: anchorX, y: anchorY }, width: entry.width, height: entry.height, entry });
     }
 
-    // Van boven naar beneden plaatsen en botsende labels omhoog duwen.
-    placed.sort((a, b) => a.y - b.y);
-    const done: Placed[] = [];
-    for (const item of placed) {
-      for (let guard = 0; guard < 40; guard++) {
-        const clash = done.find(
-          (o) =>
-            item.x < o.x + o.entry.width + GAP_PX &&
-            item.x + item.entry.width + GAP_PX > o.x &&
-            item.y < o.y + o.entry.height + GAP_PX &&
-            item.y + item.entry.height + GAP_PX > o.y,
-        );
-        if (!clash) break;
-        item.y = clash.y - item.entry.height - GAP_PX;
-      }
-      item.x = Math.max(2, Math.min(item.x, size.width - item.entry.width - 2));
-      item.y = Math.max(2, Math.min(item.y, size.height - item.entry.height - 2));
-      done.push(item);
-
-      item.entry.el!.style.transform = `translate(${Math.round(item.x)}px, ${Math.round(item.y)}px)`;
-      if (item.entry.line) {
-        const cx = Math.max(item.x, Math.min(item.anchorX, item.x + item.entry.width));
-        const cy = item.anchorY > item.y ? item.y + item.entry.height : item.y;
-        item.entry.line.setAttribute('x1', `${item.anchorX}`);
-        item.entry.line.setAttribute('y1', `${item.anchorY}`);
-        item.entry.line.setAttribute('x2', `${cx}`);
-        item.entry.line.setAttribute('y2', `${cy}`);
+    const placements = layoutLabels(inputs, { width: size.width, height: size.height, gap: GAP_PX, obstacles: obstacleSegments });
+    for (const item of placements) {
+      const entry = registry.get(item.id);
+      if (!entry?.el) continue;
+      entry.el.style.transform = `translate(${Math.round(item.x)}px, ${Math.round(item.y)}px)`;
+      if (entry.line) {
+        entry.line.setAttribute('x1', `${item.anchor.x}`);
+        entry.line.setAttribute('y1', `${item.anchor.y}`);
+        entry.line.setAttribute('x2', `${item.leader.x}`);
+        entry.line.setAttribute('y2', `${item.leader.y}`);
       }
     }
   });

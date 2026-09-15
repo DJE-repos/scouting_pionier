@@ -33,6 +33,38 @@ describe('balken', () => {
   });
 });
 
+describe('contextobjecten', () => {
+  it('voegt een boom toe met parametrische standaardwaarden', () => {
+    store().addContextObject('tree', [2, 0, 3]);
+
+    expect(store().project.contextObjects).toEqual([
+      expect.objectContaining({ type: 'tree', position: [2, 0, 3], trunkDiameterM: 0.3, heightM: 6, crownDiameterM: 4 }),
+    ]);
+    expect(store().selectedContextObjectIds).toEqual([store().project.contextObjects[0].id]);
+  });
+
+  it('neemt contextobjecten mee in undo en redo', () => {
+    store().addContextObject('adult', [0, 0, 0]);
+    store().undo();
+    expect(store().project.contextObjects).toHaveLength(0);
+
+    store().redo();
+    expect(store().project.contextObjects[0].type).toBe('adult');
+  });
+
+  it('selecteert, transformeert en verwijdert een contextobject', () => {
+    store().addContextObject('building', [0, 0, 0]);
+    const id = store().project.contextObjects[0].id;
+    const rotation = toQuat(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2));
+
+    store().transformContextObject(id, [4, 0, -2], rotation);
+    expect(store().project.contextObjects[0]).toMatchObject({ position: [4, 0, -2], quaternion: rotation });
+
+    store().deleteSelected();
+    expect(store().project.contextObjects).toHaveLength(0);
+  });
+});
+
 describe('knopen', () => {
   it('maakt geen knoop zonder balken', () => {
     expect(store().createLashing('mastworp')).toBeNull();
@@ -105,6 +137,112 @@ describe('undo/redo', () => {
   });
 });
 
+describe('bouwstappen', () => {
+  it('slaat een toelichting per stap op', () => {
+    store().setStepDescription(0, 'Plaats eerst de staanders.');
+
+    expect(store().project.steps[0].description).toBe('Plaats eerst de staanders.');
+  });
+
+  it('houdt context verplicht op het vertrekpunt', () => {
+    store().setStepIncludeContext(0, false);
+
+    expect(store().project.steps[0].includeContext).toBe(true);
+  });
+
+  it('schakelt context in de documentatie per gewone stap aan en uit', () => {
+    store().addStep('Fundering');
+    store().setStepIncludeContext(1, false);
+
+    expect(store().project.steps[1].includeContext).toBe(false);
+  });
+
+  it('herordent stappen en behoudt de actieve inhoudelijke stap', () => {
+    store().addStep('Fundering');
+    store().addStep('Staanders');
+    store().setPreviewStep(1);
+
+    store().moveStep(1, 'down');
+
+    expect(store().project.steps.map((step) => step.title)).toEqual([
+      'Vertrekpunt',
+      'Staanders',
+      'Fundering',
+    ]);
+    expect(store().project.steps.map((step) => step.index)).toEqual([0, 1, 2]);
+    expect(store().previewStep).toBe(2);
+
+    store().undo();
+    expect(store().project.steps.map((step) => step.title)).toEqual([
+      'Vertrekpunt',
+      'Fundering',
+      'Staanders',
+    ]);
+    store().redo();
+    expect(store().project.steps[2].title).toBe('Fundering');
+  });
+
+  it('remapt staptransformaties bij het herordenen', () => {
+    const beamId = store().addBeam(4, [0, 0, 0], alongX);
+    store().addStep('Tussenstap');
+    store().addStep('Eindstap');
+    store().setPreviewStep(1);
+    store().transformBeam(beamId, [5, 0, 0], alongX);
+
+    store().moveStep(1, 'down');
+
+    expect(store().project.beams[0].stepTransforms?.[0].stepIndex).toBe(2);
+    expect(resolveModel(store().project, store().library, 1).beams[0].position).toEqual([0, 0, 0]);
+    expect(resolveModel(store().project, store().library, 2).beams[0].position).toEqual([5, 0, 0]);
+  });
+
+  it('behoudt rotatie en verplaatsing binnen dezelfde stap', () => {
+    const beamId = store().addBeam(4, [0, 0, 0], alongX);
+    const kwartslag = toQuat(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2));
+    store().addStep('Transformeren');
+
+    store().transformBeam(beamId, [0, 0, 0], kwartslag);
+    const rotated = resolveModel(store().project, store().library, 1).beams[0];
+    store().transformBeam(beamId, [5, 0, 0], rotated.quaternion);
+
+    const transformed = resolveModel(store().project, store().library, 1).beams[0];
+    expect(transformed.position).toEqual([5, 0, 0]);
+    expect(transformed.quaternion).toEqual(kwartslag);
+  });
+
+  it('verwijdert transformaties uit een verwijderde stap', () => {
+    const beamId = store().addBeam(4, [0, 0, 0], alongX);
+    store().addStep('Tussenstap');
+    store().addStep('Eindstap');
+    store().setPreviewStep(1);
+    const kwartslag = toQuat(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2));
+    store().transformBeam(beamId, [5, 0, 0], kwartslag);
+
+    store().removeStep(1);
+
+    expect(store().project.steps.map((step) => step.title)).toEqual(['Vertrekpunt', 'Eindstap']);
+    expect(store().project.steps.map((step) => step.index)).toEqual([0, 1]);
+    expect(store().project.beams[0].stepTransforms).toEqual([]);
+    expect(store().previewStep).toBe(0);
+    expect(resolveModel(store().project, store().library, 0).beams[0]).toMatchObject({
+      position: [0, 0, 0],
+      quaternion: alongX,
+    });
+  });
+
+  it('schuift transformaties uit latere stappen terug bij het verwijderen', () => {
+    const beamId = store().addBeam(4, [0, 0, 0], alongX);
+    store().addStep('Tussenstap');
+    store().addStep('Eindstap');
+    store().transformBeam(beamId, [8, 0, 0], alongX);
+
+    store().removeStep(1);
+
+    expect(store().project.beams[0].stepTransforms?.[0].stepIndex).toBe(1);
+    expect(resolveModel(store().project, store().library, 1).beams[0].position).toEqual([8, 0, 0]);
+  });
+});
+
 describe('assemblies', () => {
   it('slaat een selectie op en plaatst hem opnieuw met knopen en al', () => {
     const a = store().addBeam(4, [1, 0, 0], alongX);
@@ -127,6 +265,34 @@ describe('assemblies', () => {
     const placed = model.beams.filter((x) => x.instanceId);
     expect(placed.every((x) => x.position[0] > 9)).toBe(true);
   });
+
+  it('neemt een tijdelijke assembly apart op in de materiaalstaat', () => {
+    const beamId = store().addBeam(4, [0, 0, 0], alongX);
+    store().setSelection([beamId]);
+    store().saveSelectionAsAssembly('schoor', true);
+    store().deleteSelected();
+    store().addAssemblyInstance(store().library.defs[0].id, [0, 0, 0]);
+
+    const model = resolveModel(store().project, store().library);
+    expect(model.beams[0].temporaryMeasure).toBe(true);
+
+    const bom = computeBillOfMaterials(model);
+    expect(bom.totalBeams).toBe(0);
+    expect(bom.totalMeasureBeams).toBe(1);
+  });
+
+    it('versioneert een assemblytransformatie per stap', () => {
+      const beamId = store().addBeam(4, [0, 0, 0], alongX);
+      store().setSelection([beamId]);
+      store().saveSelectionAsAssembly('paal');
+      store().addAssemblyInstance(store().library.defs[0].id, [0, 0, 0]);
+      const instanceId = store().project.assemblyInstances[0].id;
+      store().addStep();
+      store().transformInstance(instanceId, [6, 0, 0], [0, 0, 0, 1]);
+
+      expect(resolveModel(store().project, store().library, 0).beams[1].position).toEqual([0, 0, 0]);
+      expect(resolveModel(store().project, store().library, 1).beams[1].position).toEqual([6, 0, 0]);
+    });
 
   it('haalt een instantie uit elkaar tot losse balken', () => {
     const a = store().addBeam(4, [0, 0, 0], alongX);
@@ -332,6 +498,103 @@ describe('touwen', () => {
 
     expect(store().project.ropes).toHaveLength(0);
   });
+
+  it('maakt een knoop op een geselecteerd touw', () => {
+    const a = store().addBeam(4, [0, 0, 0], alongX);
+    const b = store().addBeam(4, [0, 6, 0], alongX);
+
+    store().setSelection([a]);
+    const knot1 = store().createLashing('mastworp')!;
+
+    store().setSelection([b]);
+    const knot2 = store().createLashing('mastworp')!;
+
+    const ropeId = store().createRope(knot1, knot2)!;
+    expect(ropeId).not.toBeNull();
+
+    store().select('rope', ropeId, false);
+    const knotOnRopeId = store().createLashing('vlinderknoop')!;
+    expect(knotOnRopeId).not.toBeNull();
+
+    const lashing = store().project.lashings.find((l) => l.id === knotOnRopeId)!;
+    expect(lashing.ropeIds).toEqual([ropeId]);
+    expect(lashing.beamIds).toEqual([]);
+
+    const model = resolveModel(store().project, store().library);
+    const resolvedKnot = model.lashings.find((l) => l.id === knotOnRopeId)!;
+    expect(resolvedKnot).toBeDefined();
+  });
+
+  it('spant een touw vanaf een knoop op een touw naar een knoop op een balk', () => {
+    const a = store().addBeam(4, [0, 0, 0], alongX);
+    const b = store().addBeam(4, [0, 6, 0], alongX);
+    const c = store().addBeam(4, [3, 3, 0], alongX);
+
+    store().setSelection([a]);
+    const knot1 = store().createLashing('mastworp')!;
+
+    store().setSelection([b]);
+    const knot2 = store().createLashing('mastworp')!;
+
+    store().setSelection([c]);
+    const knot3 = store().createLashing('mastworp')!;
+
+    const rope1Id = store().createRope(knot1, knot2)!;
+
+    store().select('rope', rope1Id, false);
+    const knotOnRopeId = store().createLashing('vlinderknoop')!;
+
+    const rope2Id = store().createRope(knotOnRopeId, knot3, 'Aftakking')!;
+    expect(rope2Id).not.toBeNull();
+
+    const model = resolveModel(store().project, store().library);
+    expect(model.ropes).toHaveLength(2);
+    const r2 = model.ropes.find((r) => r.id === rope2Id)!;
+    expect(r2.name).toBe('Aftakking');
+    expect(r2.lengthM).toBeCloseTo(3);
+  });
+
+  it('verwijdert knopen op een touw als dat touw wordt verwijderd', () => {
+    const a = store().addBeam(4, [0, 0, 0], alongX);
+    const b = store().addBeam(4, [0, 6, 0], alongX);
+
+    store().setSelection([a]);
+    const knot1 = store().createLashing('mastworp')!;
+
+    store().setSelection([b]);
+    const knot2 = store().createLashing('mastworp')!;
+
+    const rope1Id = store().createRope(knot1, knot2)!;
+
+    store().select('rope', rope1Id, false);
+    const knotOnRopeId = store().createLashing('vlinderknoop')!;
+
+    store().select('rope', rope1Id, false);
+    store().deleteSelected();
+
+    expect(store().project.ropes).toHaveLength(0);
+    expect(store().project.lashings.find((l) => l.id === knotOnRopeId)).toBeUndefined();
+  });
+
+  it('koppelt de begin- en eindknopen correct aan het touw in het model', () => {
+    const a = store().addBeam(4, [0, 0, 0], alongX);
+    const b = store().addBeam(4, [0, 6, 0], alongX);
+
+    store().setSelection([a]);
+    const knot1 = store().createLashing('mastworp')!;
+
+    store().setSelection([b]);
+    const knot2 = store().createLashing('mastworp')!;
+
+    const ropeId = store().createRope(knot1, knot2, 'Hoofdtouw')!;
+    store().select('rope', ropeId, false);
+
+    const model = resolveModel(store().project, store().library);
+    const rope = model.ropes.find((r) => r.id === ropeId)!;
+    expect(rope.fromKnotId).toBe(knot1);
+    expect(rope.toKnotId).toBe(knot2);
+    expect(store().selectedRopeIds).toContain(ropeId);
+  });
 });
 
 describe('drag-selectie en meervoudige selectie', () => {
@@ -374,6 +637,39 @@ describe('bouwstappen', () => {
     expect(store().project.beams.find((x) => x.id === second)?.stepIndex).toBe(1);
     expect(resolveModel(store().project, store().library, 0).beams).toHaveLength(1);
     expect(resolveModel(store().project, store().library, 1).beams).toHaveLength(2);
+  });
+
+  it('maakt bij transformeren in een latere stap een nieuwe versie', () => {
+    const id = store().addBeam(4, [0, 0, 0], alongX);
+    store().addStep();
+    store().transformBeam(id, [5, 0, 0], alongX);
+
+    expect(resolveModel(store().project, store().library, 0).beams[0].position).toEqual([0, 0, 0]);
+    expect(resolveModel(store().project, store().library, 1).beams[0].position).toEqual([5, 0, 0]);
+    expect(resolveModel(store().project, store().library).beams[0].position).toEqual([5, 0, 0]);
+  });
+
+  it('laat een knoop een stapversie van zijn positie volgen', () => {
+    const beamId = store().addBeam(4, [0, 0, 0], alongX);
+    store().setSelection([beamId]);
+    const lashingId = store().createLashing('mastworp')!;
+    store().addStep();
+    store().select('lashing', lashingId, false);
+    store().transformLashing(lashingId, [3, 0, 0]);
+
+    const previous = resolveModel(store().project, store().library, 0).lashings[0];
+    const current = resolveModel(store().project, store().library, 1).lashings[0];
+    expect(previous.localOffset).not.toEqual(current.localOffset);
+    expect(beamLocalToWorld(resolveModel(store().project, store().library, 1).beams[0], current.localOffset).x).toBeCloseTo(3);
+  });
+
+  it('kan een staptransformatie ongedaan maken', () => {
+    const id = store().addBeam(4, [0, 0, 0], alongX);
+    store().addStep();
+    store().transformBeam(id, [5, 0, 0], alongX);
+    store().undo();
+
+    expect(resolveModel(store().project, store().library, 1).beams[0].position).toEqual([0, 0, 0]);
   });
 });
 

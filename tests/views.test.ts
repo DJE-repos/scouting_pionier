@@ -20,10 +20,9 @@ describe('viewOrientation', () => {
     }
   });
 
-  it('kijkt bij het bovenaanzicht recht naar beneden', () => {
+  it('kijkt bij het bovenaanzicht recht naar beneden in het Y-up-assenstelsel', () => {
     const { direction, up } = viewOrientation('Bovenaanzicht', angles);
     expect(direction.toArray()).toEqual([0, 1, 0]);
-    // schermonder wijst naar de kijker van het vooraanzicht
     expect(up.y).toBeCloseTo(0);
     expect(up.dot(viewOrientation('Vooraanzicht', angles).direction)).toBeCloseTo(-1);
   });
@@ -75,10 +74,14 @@ describe('anglesFromDirection', () => {
     }
   });
 
-  it('normaliseert een willekeurige vector', () => {
+  it('normaliseert een willekeurige vector in het Y-up-assenstelsel', () => {
     expect(anglesFromDirection(new Vector3(0, 5, 0))).toEqual({
       azimuthDeg: 0,
       elevationDeg: 90,
+    });
+    expect(anglesFromDirection(new Vector3(0, 0, 5))).toEqual({
+      azimuthDeg: 0,
+      elevationDeg: 0,
     });
   });
 });

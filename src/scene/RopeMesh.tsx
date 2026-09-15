@@ -35,23 +35,33 @@ export function RopeMesh({
 
   if (length < 0.001) return null;
 
+  // hitRadius zorgt voor een ruim trefgebied (minimaal 5cm straal / 10cm diameter) bij dunne touwen
+  const hitRadius = Math.max(radius * 4, 0.05);
+
   return (
-    <mesh
+    <group
       name={`rope:${rope.id}`}
       position={position}
       quaternion={quaternion}
       onPointerDown={onPointerDown}
     >
-      <cylinderGeometry args={[radius * (highlighted ? 1.4 : 1), radius * (highlighted ? 1.4 : 1), length, 12]} />
-      <meshStandardMaterial
-        key={dimmed ? 'dim' : 'solid'}
-        color={selected ? '#38bdf8' : rope.color ?? '#d97706'}
-        roughness={0.7}
-        metalness={0.05}
-        transparent={dimmed}
-        opacity={dimmed ? 0.15 : 1}
-        depthWrite={!dimmed}
-      />
-    </mesh>
+      <mesh>
+        <cylinderGeometry args={[radius * (highlighted ? 1.4 : 1), radius * (highlighted ? 1.4 : 1), length, 12]} />
+        <meshStandardMaterial
+          key={dimmed ? 'dim' : 'solid'}
+          color={selected ? '#38bdf8' : rope.color ?? '#d97706'}
+          roughness={0.7}
+          metalness={0.05}
+          transparent={dimmed}
+          opacity={dimmed ? 0.15 : 1}
+          depthWrite={!dimmed}
+        />
+      </mesh>
+      {/* Onzichtbare grotere cilinder voor trefzeker klikken/selecteren */}
+      <mesh>
+        <cylinderGeometry args={[hitRadius, hitRadius, length, 8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+    </group>
   );
 }

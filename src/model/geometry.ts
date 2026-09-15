@@ -1,4 +1,4 @@
-import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix4, Quaternion, Vector3, Vector4 } from 'three';
 import type { Beam, LengthAnchor, Quat, Vec3 } from './types';
 
 export const v3 = (v: Vec3) => new Vector3(v[0], v[1], v[2]);
@@ -94,21 +94,45 @@ const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
  * Contactpunt voor een knoop tussen meerdere balken: het gemiddelde van de
  * middens van de kortste verbindingen tussen elk balkenpaar.
  */
-export function contactPoint(beams: Beam[]): Vector3 {
-  if (beams.length === 0) return new Vector3();
-  if (beams.length === 1) return v3(beams[0].position);
+export function contactPointForSegments(segments: [Vector3, Vector3][]): Vector3 {
+  if (segments.length === 0) return new Vector3();
+  if (segments.length === 1) {
+    return segments[0][0].clone().add(segments[0][1]).multiplyScalar(0.5);
+  }
 
   const points: Vector3[] = [];
-  for (let i = 0; i < beams.length; i++) {
-    for (let j = i + 1; j < beams.length; j++) {
-      const [a1, b1] = beamEndpoints(beams[i]);
-      const [a2, b2] = beamEndpoints(beams[j]);
-      const { a, b } = closestPointsBetweenSegments(a1, b1, a2, b2);
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      const { a, b } = closestPointsBetweenSegments(
+        segments[i][0],
+        segments[i][1],
+        segments[j][0],
+        segments[j][1],
+      );
       points.push(a.add(b).multiplyScalar(0.5));
     }
   }
   const sum = points.reduce((acc, p) => acc.add(p), new Vector3());
   return sum.divideScalar(points.length);
+}
+
+export function contactPoint(beams: Beam[]): Vector3 {
+  if (beams.length === 0) return new Vector3();
+  if (beams.length === 1) return v3(beams[0].position);
+  return contactPointForSegments(beams.map((b) => beamEndpoints(b)));
+}
+
+export function contactPointForItems(
+  beams: Beam[],
+  ropes: { fromPosition: Vec3; toPosition: Vec3 }[] = [],
+): Vector3 {
+  const segments: [Vector3, Vector3][] = [
+    ...beams.map((b) => beamEndpoints(b)),
+    ...ropes.map(
+      (r) => [new Vector3(...r.fromPosition), new Vector3(...r.toPosition)] as [Vector3, Vector3],
+    ),
+  ];
+  return contactPointForSegments(segments);
 }
 
 export function worldToBeamLocal(beam: Beam, world: Vector3): Vec3 {
@@ -118,6 +142,25 @@ export function worldToBeamLocal(beam: Beam, world: Vector3): Vec3 {
 
 export function beamLocalToWorld(beam: Beam, local: Vec3): Vector3 {
   return v3(local).applyMatrix4(beamMatrix(beam));
+}
+
+export function ropeMatrix(fromPosition: Vector3, toPosition: Vector3): Matrix4 {
+  const diff = toPosition.clone().sub(fromPosition);
+  const len = diff.length();
+  if (len < 0.001) {
+    return new Matrix4().compose(fromPosition, new Quaternion(), new Vector3(1, 1, 1));
+  }
+  const q = quaternionFromDirection(diff);
+  return new Matrix4().compose(fromPosition, q, new Vector3(1, 1, 1));
+}
+
+export function worldToRopeLocal(fromPosition: Vector3, toPosition: Vector3, world: Vector3): Vec3 {
+  const inv = ropeMatrix(fromPosition, toPosition).invert();
+  return toVec3(world.clone().applyMatrix4(inv));
+}
+
+export function ropeLocalToWorld(fromPosition: Vector3, toPosition: Vector3, local: Vec3): Vector3 {
+  return v3(local).applyMatrix4(ropeMatrix(fromPosition, toPosition));
 }
 
 export interface ScreenBox {
@@ -167,10 +210,16 @@ export function projectToScreen(
   width: number,
   height: number,
 ): { x: number; y: number; inFront: boolean } {
-  const p = point.clone().applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
-  const x = ((p.x + 1) / 2) * width;
-  const y = ((-p.y + 1) / 2) * height;
-  const inFront = p.z <= 1 && p.z >= -1;
+  const p = new Vector4(point.x, point.y, point.z, 1)
+    .applyMatrix4(camera.matrixWorldInverse)
+    .applyMatrix4(camera.projectionMatrix);
+
+  const w = Math.abs(p.w) > Number.EPSILON ? p.w : 1;
+  const ndcX = p.x / w;
+  const ndcY = p.y / w;
+  const x = ((ndcX + 1) / 2) * width;
+  const y = ((-ndcY + 1) / 2) * height;
+  const inFront = p.z <= w && p.z >= -w;
   return { x, y, inFront };
 }
 

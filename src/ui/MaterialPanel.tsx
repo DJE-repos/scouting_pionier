@@ -97,6 +97,37 @@ export function MaterialPanel() {
         Exporteer CSV
       </button>
 
+      {(bom.measureBeams.length > 0 || bom.measureKnots.length > 0 || bom.measureRopes.length > 0) && (
+        <>
+          <h3>Tijdelijke maatregelen</h3>
+          <table className="table table--muted">
+            <tbody>
+              {bom.measureBeams.map((row) => (
+                <tr key={`${row.lengthM}-${row.diameterMm}`}>
+                  <td>balk {row.lengthM} m ({row.diameterMm} mm)</td>
+                  <td>{row.count}</td>
+                  <td>{row.totalLengthM.toFixed(1)} m</td>
+                </tr>
+              ))}
+              {bom.measureKnots.map((row) => (
+                <tr key={row.name}>
+                  <td>knoop {row.name}</td>
+                  <td>{row.count}</td>
+                  <td>{row.totalRopeM.toFixed(1)} m touw</td>
+                </tr>
+              ))}
+              {bom.measureRopes.map((row) => (
+                <tr key={row.name}>
+                  <td>touw {row.name}</td>
+                  <td>{row.count}</td>
+                  <td>{row.totalRopeM.toFixed(1)} m</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
       {(bom.temporaryBeams.length > 0 || bom.temporaryKnots.length > 0) && (
         <>
           <h3>Tijdelijk in tussenstappen</h3>

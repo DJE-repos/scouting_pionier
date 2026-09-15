@@ -28,6 +28,9 @@ export interface BillOfMaterials {
   temporaryBeams: BeamRow[];
   temporaryKnots: KnotRow[];
   temporaryRopes: RopeRow[];
+  measureBeams: BeamRow[];
+  measureKnots: KnotRow[];
+  measureRopes: RopeRow[];
   totalBeams: number;
   totalBeamLengthM: number;
   totalKnots: number;
@@ -36,6 +39,9 @@ export interface BillOfMaterials {
   totalTemporaryBeams: number;
   totalTemporaryKnots: number;
   totalTemporaryRopes: number;
+  totalMeasureBeams: number;
+  totalMeasureKnots: number;
+  totalMeasureRopes: number;
 }
 
 function groupBeams(beams: ResolvedModel['beams']): BeamRow[] {
@@ -83,13 +89,17 @@ function groupRopes(ropes: ResolvedModel['ropes'] = []): RopeRow[] {
 }
 
 export function computeBillOfMaterials(model: ResolvedModel): BillOfMaterials {
-  const beams = groupBeams(model.beams.filter((b) => !b.temporary));
-  const knots = groupKnots(model.lashings.filter((l) => !l.temporary));
-  const ropes = groupRopes((model.ropes ?? []).filter((r) => !r.temporary));
+  const beams = groupBeams(model.beams.filter((b) => !b.temporary && !b.temporaryMeasure));
+  const knots = groupKnots(model.lashings.filter((l) => !l.temporary && !l.temporaryMeasure));
+  const ropes = groupRopes((model.ropes ?? []).filter((r) => !r.temporary && !r.temporaryMeasure));
 
   const temporaryBeams = groupBeams(model.beams.filter((b) => b.temporary));
   const temporaryKnots = groupKnots(model.lashings.filter((l) => l.temporary));
   const temporaryRopes = groupRopes((model.ropes ?? []).filter((r) => r.temporary));
+
+  const measureBeams = groupBeams(model.beams.filter((b) => !b.temporary && b.temporaryMeasure));
+  const measureKnots = groupKnots(model.lashings.filter((l) => !l.temporary && l.temporaryMeasure));
+  const measureRopes = groupRopes((model.ropes ?? []).filter((r) => !r.temporary && r.temporaryMeasure));
 
   const knotRopeM = knots.reduce((n, r) => n + r.totalRopeM, 0);
   const spanRopeM = ropes.reduce((n, r) => n + r.totalRopeM, 0);
@@ -101,6 +111,9 @@ export function computeBillOfMaterials(model: ResolvedModel): BillOfMaterials {
     temporaryBeams,
     temporaryKnots,
     temporaryRopes,
+    measureBeams,
+    measureKnots,
+    measureRopes,
     totalBeams: beams.reduce((n, r) => n + r.count, 0),
     totalBeamLengthM: round2(beams.reduce((n, r) => n + r.totalLengthM, 0)),
     totalKnots: knots.reduce((n, r) => n + r.count, 0),
@@ -109,6 +122,9 @@ export function computeBillOfMaterials(model: ResolvedModel): BillOfMaterials {
     totalTemporaryBeams: temporaryBeams.reduce((n, r) => n + r.count, 0),
     totalTemporaryKnots: temporaryKnots.reduce((n, r) => n + r.count, 0),
     totalTemporaryRopes: temporaryRopes.reduce((n, r) => n + r.count, 0),
+    totalMeasureBeams: measureBeams.reduce((n, r) => n + r.count, 0),
+    totalMeasureKnots: measureKnots.reduce((n, r) => n + r.count, 0),
+    totalMeasureRopes: measureRopes.reduce((n, r) => n + r.count, 0),
   };
 }
 
@@ -124,6 +140,15 @@ export function billOfMaterialsToCsv(bom: BillOfMaterials): string {
   }
   for (const row of bom.ropes) {
     lines.push(`Touw;${row.name};${row.count};${round2(row.totalRopeM)} m touw`);
+  }
+  for (const row of bom.measureBeams) {
+    lines.push(`Tijdelijke maatregel;Balk ${row.lengthM} m / ${row.diameterMm} mm;${row.count};${round2(row.totalLengthM)} m`);
+  }
+  for (const row of bom.measureKnots) {
+    lines.push(`Tijdelijke maatregel;Knoop ${row.name};${row.count};${round2(row.totalRopeM)} m touw`);
+  }
+  for (const row of bom.measureRopes) {
+    lines.push(`Tijdelijke maatregel;Touw ${row.name};${row.count};${round2(row.totalRopeM)} m touw`);
   }
   lines.push(`Totaal;Balken;${bom.totalBeams};${bom.totalBeamLengthM} m`);
   lines.push(`Totaal;Knopen;${bom.totalKnots};${bom.totalRopeM} m touw`);

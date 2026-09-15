@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import type { Project } from '../../model/types';
 import type { ResolvedModel } from '../../model/resolve';
-import { beamAxis, beamEndpoints, beamLocalToWorld } from '../../model/geometry';
+import { beamAxis, beamEndpoints, beamLocalToWorld, ropeLocalToWorld } from '../../model/geometry';
 import { ifcGuidFrom, newIfcGuid } from './ifcGuid';
 
 /** Minimale STEP-schrijver: verzamelt regels en geeft referenties (#n) terug. */
@@ -214,9 +214,21 @@ export function buildIfc(
   // --- knopen als mechanische bevestigingen ---
   const fastenerRefs: string[] = [];
   for (const lashing of model.lashings) {
-    const anchor = model.beams.find((b) => b.id === lashing.beamIds[0]);
-    if (!anchor) continue;
-    const world = beamLocalToWorld(anchor, lashing.localOffset);
+    let world: Vector3 | null = null;
+    const anchorBeam = model.beams.find((b) => b.id === lashing.beamIds[0]);
+    if (anchorBeam) {
+      world = beamLocalToWorld(anchorBeam, lashing.localOffset);
+    } else if (lashing.ropeIds && lashing.ropeIds.length > 0) {
+      const anchorRope = model.ropes.find((r) => r.id === lashing.ropeIds![0]);
+      if (anchorRope) {
+        world = ropeLocalToWorld(
+          new Vector3(...anchorRope.fromPosition),
+          new Vector3(...anchorRope.toPosition),
+          lashing.localOffset,
+        );
+      }
+    }
+    if (!world) continue;
 
     const location = f.add('IFCCARTESIANPOINT', [list([num(world.x), num(world.y), num(world.z)])]);
     const placement3d = f.add('IFCAXIS2PLACEMENT3D', [location, axisZ, axisX]);

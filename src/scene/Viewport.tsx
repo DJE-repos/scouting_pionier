@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
 import { GizmoHelper, GizmoViewport, Grid, OrbitControls, TransformControls } from '@react-three/drei';
-import { Object3D, Vector3 } from 'three';
+import { Matrix4, Object3D, Quaternion, Vector3 } from 'three';
 import { useEditor } from '../store/projectStore';
-import { resolveModel } from '../model/resolve';
+import { resolveModel, resolveStepTransform } from '../model/resolve';
 import {
   beamEndpoints,
   beamLocalToWorld,
@@ -11,6 +11,7 @@ import {
   isSegmentInScreenBox,
   projectToScreen,
   quaternionFromDirection,
+  ropeLocalToWorld,
   snapVector,
   toQuat,
   toVec3,
@@ -20,7 +21,11 @@ import { BeamMesh } from './BeamMesh';
 import { LashingMarker } from './LashingMarker';
 import { RopeMesh } from './RopeMesh';
 import { KnotLabelLayer, KnotLabelProjector } from './KnotLabels';
+import { MeasurementOverlay } from './MeasurementOverlay';
 import { registerCanvas } from './snapshot';
+import { MeasurementToolbar } from '../ui/MeasurementToolbar';
+import { ContextObjects } from './ContextObjects';
+import { GeoContext } from './GeoContext';
 
 export interface DragRect {
   left: number;
@@ -43,8 +48,8 @@ export function Viewport() {
         gl={{ preserveDrawingBuffer: true, antialias: true }}
         camera={
           cameraProjection === 'orthographic'
-            ? { position: [8, 6, 8], zoom: 65, near: -500, far: 500 }
-            : { position: [8, 6, 8], fov: 45, near: 0.05, far: 500 }
+            ? { position: [8, 8, 8], up: [0, 1, 0], zoom: 65, near: -500, far: 500 }
+            : { position: [8, 8, 8], up: [0, 1, 0], fov: 45, near: 0.05, far: 500 }
         }
       >
         <color attach="background" args={['#eef2f6']} />
@@ -52,6 +57,7 @@ export function Viewport() {
         <KnotLabelProjector />
       </Canvas>
       <KnotLabelLayer />
+      <MeasurementToolbar />
       {dragRect && (
         <div
           className="selection-box"
@@ -78,10 +84,15 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
   const selectedLashingIds = useEditor((s) => s.selectedLashingIds);
   const selectedInstanceIds = useEditor((s) => s.selectedInstanceIds);
   const selectedRopeIds = useEditor((s) => s.selectedRopeIds);
+  const selectedContextObjectIds = useEditor((s) => s.selectedContextObjectIds);
   const pendingLengthM = useEditor((s) => s.pendingLengthM);
+  const pendingContextObjectType = useEditor((s) => s.pendingContextObjectType);
   const settings = project.settings;
 
-  const model = useMemo(() => resolveModel(project, library), [project, library]);
+  const model = useMemo(
+    () => resolveModel(project, library, previewStep),
+    [project, library, previewStep],
+  );
   const [gizmoProxy] = useState(() => new Object3D());
   const gizmoControls = useRef<GizmoControls | null>(null);
   const [isDragSelecting, setIsDragSelecting] = useState(false);
@@ -89,7 +100,16 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
   const select = useEditor((s) => s.select);
   const clearSelection = useEditor((s) => s.clearSelection);
   const addBeam = useEditor((s) => s.addBeam);
+  const addContextObject = useEditor((s) => s.addContextObject);
   const setPendingLength = useEditor((s) => s.setPendingLength);
+  const setPendingContextObjectType = useEditor((s) => s.setPendingContextObjectType);
+  const addMeasurementPoint = useEditor((s) => s.addMeasurementPoint);
+
+  const handleMeasurementPoint = useCallback((point: Vector3) => {
+    if (!useEditor.getState().measurementMode) return false;
+    addMeasurementPoint(toVec3(point));
+    return true;
+  }, [addMeasurementPoint]);
 
   /** De gizmo luistert rechtstreeks op de canvas; die kliks mogen de scene niet bereiken. */
   const gizmoHasPointer = useCallback(
@@ -167,7 +187,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
         const curPreviewStep = store.previewStep;
 
         const isItemHidden = (item: { stepIndex: number; temporary: boolean }) =>
-          curPreviewStep !== null && item.temporary && item.stepIndex !== curPreviewStep;
+          item.temporary ? item.stepIndex !== curPreviewStep : false;
 
         const matchedBeamIds: string[] = [];
         const matchedLashingIds: string[] = [];
@@ -204,9 +224,21 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
         // 2. Check lashings
         for (const lashing of currentModel.lashings) {
           if (isItemHidden(lashing)) continue;
-          const anchor = currentModel.beams.find((b) => b.id === lashing.beamIds[0]);
-          if (!anchor) continue;
-          const worldPos = beamLocalToWorld(anchor, lashing.localOffset);
+          let worldPos: Vector3 | null = null;
+          const anchorBeam = currentModel.beams.find((b) => b.id === lashing.beamIds[0]);
+          if (anchorBeam) {
+            worldPos = beamLocalToWorld(anchorBeam, lashing.localOffset);
+          } else if (lashing.ropeIds && lashing.ropeIds.length > 0) {
+            const anchorRope = currentModel.ropes.find((r) => r.id === lashing.ropeIds![0]);
+            if (anchorRope) {
+              worldPos = ropeLocalToWorld(
+                new Vector3(...anchorRope.fromPosition),
+                new Vector3(...anchorRope.toPosition),
+                lashing.localOffset,
+              );
+            }
+          }
+          if (!worldPos) continue;
           const s = projectToScreen(worldPos, camera, size.width, size.height);
           if (s.inFront && isPointInScreenBox(s.x, s.y, box)) {
             matchedLashingIds.push(lashing.id);
@@ -262,7 +294,11 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
   const handleGroundDown = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
       if (gizmoHasPointer()) return;
-      if (pendingLengthM === null) {
+      if (handleMeasurementPoint(e.point)) {
+        e.stopPropagation();
+        return;
+      }
+      if (pendingLengthM === null && pendingContextObjectType === null) {
         if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !useEditor.getState().boxSelectMode) {
           clearSelection();
         }
@@ -270,20 +306,27 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
       }
       e.stopPropagation();
       const p = snapVector(e.point, settings.gridSnapM);
-      // Nieuwe balk ligt horizontaal langs +X, rustend op de grond.
+      if (pendingContextObjectType !== null) {
+        p.z = 0;
+        addContextObject(pendingContextObjectType, toVec3(p));
+        setPendingContextObjectType(null);
+        return;
+      }
+      if (pendingLengthM === null) return;
+      // Nieuwe balk ligt horizontaal in het maaiveld, rustend op de grond.
       const q = quaternionFromDirection(new Vector3(1, 0, 0));
-      p.y = settings.defaultDiameterMm / 2000;
+      p.z = settings.defaultDiameterMm / 2000;
       addBeam(pendingLengthM, toVec3(p), toQuat(q));
       setPendingLength(null);
     },
-    [pendingLengthM, settings.gridSnapM, settings.defaultDiameterMm, addBeam, setPendingLength, clearSelection, gizmoHasPointer],
+    [pendingLengthM, pendingContextObjectType, settings.gridSnapM, settings.defaultDiameterMm, addBeam, addContextObject, setPendingLength, setPendingContextObjectType, clearSelection, gizmoHasPointer, handleMeasurementPoint],
   );
 
-  // Voorgebouwde onderdelen horen bij hun eigen stap; in de vrije weergave staan ze als spook.
+  // Voorgebouwde onderdelen (tussenstappen) horen alleen bij hun eigen stap en zijn daarbuiten verborgen.
   const isHidden = (item: { stepIndex: number; temporary: boolean }) =>
-    previewStep !== null && item.temporary && item.stepIndex !== previewStep;
+    item.temporary ? item.stepIndex !== previewStep : false;
   const isDimmed = (item: { stepIndex: number; temporary: boolean }) =>
-    previewStep === null ? item.temporary : item.stepIndex > previewStep;
+    previewStep !== null && item.stepIndex > previewStep;
   const isNew = (stepIndex: number) => previewStep !== null && stepIndex === previewStep;
 
   return (
@@ -315,6 +358,8 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
         followCamera={false}
       />
 
+      <GeoContext />
+
       <mesh
         name="ground"
         rotation={[-Math.PI / 2, 0, 0]}
@@ -323,8 +368,26 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
         onPointerDown={handleGroundDown}
       >
         <planeGeometry args={[settings.groundSizeM, settings.groundSizeM]} />
-        <meshStandardMaterial color="#6f9f58" roughness={1} metalness={0} />
+        <meshStandardMaterial
+          color="#6f9f58"
+          roughness={1}
+          metalness={0}
+          transparent={settings.georeferenceEnabled && settings.georeferenceImagery}
+          opacity={settings.georeferenceEnabled && settings.georeferenceImagery ? 0 : 1}
+          depthWrite={!(settings.georeferenceEnabled && settings.georeferenceImagery)}
+        />
       </mesh>
+
+      <ContextObjects
+        objects={project.contextObjects}
+        selectedIds={selectedContextObjectIds}
+        onPointerDown={(object, event) => {
+          if (pendingLengthM !== null || pendingContextObjectType !== null || gizmoHasPointer()) return;
+          if (useEditor.getState().boxSelectMode) return;
+          event.stopPropagation();
+          select('contextObject', object.id, event.shiftKey);
+        }}
+      />
 
       {model.beams.map((beam) =>
         isHidden(beam) ? null : (
@@ -339,6 +402,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             highlighted={isNew(beam.stepIndex)}
             muted={previewStep !== null && beam.stepIndex < previewStep}
             onPointerDown={(e) => {
+              if (handleMeasurementPoint(e.point)) { e.stopPropagation(); return; }
               if (pendingLengthM !== null || gizmoHasPointer()) return;
               if (useEditor.getState().boxSelectMode) return;
               e.stopPropagation();
@@ -354,10 +418,12 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             key={lashing.id}
             lashing={lashing}
             beams={model.beams}
+            ropes={model.ropes}
             selected={selectedLashingIds.includes(lashing.id)}
             dimmed={isDimmed(lashing)}
             highlighted={isNew(lashing.stepIndex)}
             onPointerDown={(e) => {
+              if (handleMeasurementPoint(e.point)) { e.stopPropagation(); return; }
               if (gizmoHasPointer()) return;
               if (useEditor.getState().boxSelectMode) return;
               e.stopPropagation();
@@ -376,6 +442,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             dimmed={isDimmed(rope)}
             highlighted={isNew(rope.stepIndex)}
             onPointerDown={(e) => {
+              if (handleMeasurementPoint(e.point)) { e.stopPropagation(); return; }
               if (gizmoHasPointer()) return;
               if (useEditor.getState().boxSelectMode) return;
               e.stopPropagation();
@@ -387,6 +454,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
 
       <TransformGizmo proxy={gizmoProxy} controlsRef={gizmoControls} />
       <primitive object={gizmoProxy} />
+      <MeasurementOverlay />
 
       <OrbitControls
         enabled={!isDragSelecting}
@@ -429,54 +497,116 @@ function TransformGizmo({
   const selectedInstanceIds = useEditor((s) => s.selectedInstanceIds);
   const selectedLashingIds = useEditor((s) => s.selectedLashingIds);
   const selectedRopeIds = useEditor((s) => s.selectedRopeIds);
+  const selectedContextObjectIds = useEditor((s) => s.selectedContextObjectIds);
+  const previewStep = useEditor((s) => s.previewStep);
 
-  const model = useMemo(() => resolveModel(project, library), [project, library]);
+  const model = useMemo(
+    () => resolveModel(project, library, previewStep),
+    [project, library, previewStep],
+  );
 
   const beamId =
     selectedBeamIds.length === 1 &&
     selectedInstanceIds.length === 0 &&
     selectedLashingIds.length === 0 &&
-    selectedRopeIds.length === 0
+    selectedRopeIds.length === 0 &&
+    selectedContextObjectIds.length === 0
       ? selectedBeamIds[0]
       : null;
 
   const resolvedBeam = beamId ? model.beams.find((b) => b.id === beamId) : null;
   const looseBeam =
     resolvedBeam && !resolvedBeam.instanceId
-      ? project.beams.find((b) => b.id === resolvedBeam.id)
+      ? resolvedBeam
       : null;
 
   const instanceId =
     selectedInstanceIds.length === 1 &&
     selectedBeamIds.length === 0 &&
     selectedLashingIds.length === 0 &&
-    selectedRopeIds.length === 0
+    selectedRopeIds.length === 0 &&
+    selectedContextObjectIds.length === 0
       ? selectedInstanceIds[0]
       : resolvedBeam?.instanceId ?? null;
 
   const instance = instanceId ? project.assemblyInstances.find((i) => i.id === instanceId) : null;
+  const resolvedInstance = instance ? resolveStepTransform(instance, previewStep) : null;
 
   const lashingId =
     selectedLashingIds.length === 1 &&
     selectedBeamIds.length === 0 &&
     selectedInstanceIds.length === 0 &&
-    selectedRopeIds.length === 0
+    selectedRopeIds.length === 0 &&
+    selectedContextObjectIds.length === 0
       ? selectedLashingIds[0]
       : null;
 
   const lashing = lashingId ? model.lashings.find((l) => l.id === lashingId) : null;
-  const lashingAnchor = lashing ? model.beams.find((b) => b.id === lashing.beamIds[0]) : null;
+  const contextObjectId =
+    selectedContextObjectIds.length === 1 &&
+    selectedBeamIds.length === 0 &&
+    selectedInstanceIds.length === 0 &&
+    selectedLashingIds.length === 0 &&
+    selectedRopeIds.length === 0
+      ? selectedContextObjectIds[0]
+      : null;
+  const contextObject = contextObjectId
+    ? project.contextObjects.find((item) => item.id === contextObjectId)
+    : null;
+  let lashingPosition: Vector3 | null = null;
+  if (lashing) {
+    const lashingAnchorBeam = model.beams.find((b) => b.id === lashing.beamIds[0]);
+    if (lashingAnchorBeam) {
+      lashingPosition = beamLocalToWorld(lashingAnchorBeam, lashing.localOffset);
+    } else if (lashing.ropeIds && lashing.ropeIds.length > 0) {
+      const lashingAnchorRope = model.ropes.find((r) => r.id === lashing.ropeIds![0]);
+      if (lashingAnchorRope) {
+        lashingPosition = ropeLocalToWorld(
+          new Vector3(...lashingAnchorRope.fromPosition),
+          new Vector3(...lashingAnchorRope.toPosition),
+          lashing.localOffset,
+        );
+      }
+    }
+  }
 
   const dragging = useRef(false);
+  const startProxyMatrix = useRef(new Matrix4());
+  const startTargets = useRef<
+    { type: 'beam' | 'instance'; id: string; position: Vector3; quaternion: Quaternion }[]
+  >([]);
 
-  const targetItem = looseBeam ?? instance;
-  const lashingPosition =
-    lashing && lashingAnchor ? beamLocalToWorld(lashingAnchor, lashing.localOffset) : null;
+  const selectedInstanceIdSet = new Set(selectedInstanceIds);
+  for (const id of selectedBeamIds) {
+    const colonIndex = id.indexOf(':');
+    if (colonIndex !== -1) selectedInstanceIdSet.add(id.slice(0, colonIndex));
+  }
+  const groupInstances = project.assemblyInstances
+    .filter((item) => selectedInstanceIdSet.has(item.id))
+    .map((item) => resolveStepTransform(item, previewStep));
+  const groupBeams = model.beams.filter(
+    (beam) => !beam.instanceId && selectedBeamIds.includes(beam.id),
+  );
+  const groupTargets = [...groupBeams, ...groupInstances];
+  const selectionCount =
+    selectedBeamIds.length +
+    selectedLashingIds.length +
+    selectedInstanceIds.length +
+    selectedRopeIds.length;
+  const isGroup = groupTargets.length > 1 || (groupTargets.length > 0 && selectionCount > 1);
 
-  if (boxSelectMode || (!targetItem && !lashingPosition)) return null;
+  const targetItem = looseBeam ?? resolvedInstance ?? contextObject;
+
+  if (boxSelectMode || (!isGroup && !targetItem && !lashingPosition)) return null;
 
   if (!dragging.current) {
-    if (targetItem) {
+    if (isGroup) {
+      const center = groupTargets
+        .reduce((sum, item) => sum.add(new Vector3(...item.position)), new Vector3())
+        .divideScalar(groupTargets.length);
+      proxy.position.copy(center);
+      proxy.quaternion.identity();
+    } else if (targetItem) {
       proxy.position.set(...targetItem.position);
       proxy.quaternion.set(...targetItem.quaternion);
     } else if (lashingPosition) {
@@ -496,6 +626,23 @@ function TransformGizmo({
       onMouseDown={() => {
         dragging.current = true;
         useEditor.getState().commit();
+        if (isGroup) {
+          startProxyMatrix.current.copy(proxy.matrixWorld);
+          startTargets.current = [
+            ...groupBeams.map((item) => ({
+              type: 'beam' as const,
+              id: item.id,
+              position: new Vector3(...item.position),
+              quaternion: new Quaternion(...item.quaternion),
+            })),
+            ...groupInstances.map((item) => ({
+              type: 'instance' as const,
+              id: item.id,
+              position: new Vector3(...item.position),
+              quaternion: new Quaternion(...item.quaternion),
+            })),
+          ];
+        }
       }}
       onMouseUp={() => {
         dragging.current = false;
@@ -504,9 +651,23 @@ function TransformGizmo({
         const position = toVec3(proxy.position);
         const quaternion = toQuat(proxy.quaternion);
         const store = useEditor.getState();
-        if (looseBeam) store.transformBeam(looseBeam.id, position, quaternion);
+        if (isGroup) {
+          const delta = proxy.matrixWorld.clone().multiply(startProxyMatrix.current.clone().invert());
+          for (const target of startTargets.current) {
+            const nextPosition = target.position.clone().applyMatrix4(delta);
+            const nextQuaternion = new Quaternion()
+              .setFromRotationMatrix(delta)
+              .multiply(target.quaternion);
+            if (target.type === 'beam') {
+              store.transformBeam(target.id, toVec3(nextPosition), toQuat(nextQuaternion));
+            } else {
+              store.transformInstance(target.id, toVec3(nextPosition), toQuat(nextQuaternion));
+            }
+          }
+        } else if (looseBeam) store.transformBeam(looseBeam.id, position, quaternion);
         else if (instance) store.transformInstance(instance.id, position, quaternion);
         else if (lashing) store.transformLashing(lashing.id, position);
+        else if (contextObject) store.transformContextObject(contextObject.id, position, quaternion);
       }}
     />
   );

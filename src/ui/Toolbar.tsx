@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEditor } from '../store/projectStore';
 import { resolveModel } from '../model/resolve';
 import { buildIfc } from '../export/ifc/ifcExport';
@@ -6,6 +6,7 @@ import { generateManual } from '../export/pdf/manual';
 import { downloadBlob, pickFile } from '../persistence/download';
 import { deserialize, serialize } from '../persistence/storage';
 import { KnotDialog } from './KnotDialog';
+import { HelpDialog } from './HelpDialog';
 
 export function Toolbar() {
   const project = useEditor((s) => s.project);
@@ -13,18 +14,25 @@ export function Toolbar() {
   const settings = project.settings;
   const selectedBeamIds = useEditor((s) => s.selectedBeamIds);
   const selectedLashingIds = useEditor((s) => s.selectedLashingIds);
+  const selectedRopeIds = useEditor((s) => s.selectedRopeIds);
   const transformMode = useEditor((s) => s.transformMode);
   const boxSelectMode = useEditor((s) => s.boxSelectMode);
   const cameraProjection = useEditor((s) => s.cameraProjection);
   const canUndo = useEditor((s) => s.past.length > 0);
   const canRedo = useEditor((s) => s.future.length > 0);
+  const previewStep = useEditor((s) => s.previewStep);
+  const activeStepIndex = previewStep ?? Math.max(0, project.steps.length - 1);
+  const activeStep = project.steps.find((step) => step.index === activeStepIndex);
 
   const [knotDialogOpen, setKnotDialogOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const helpButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const handleOpenKnot = () => {
-      if (useEditor.getState().selectedBeamIds.length >= 1) {
+      const { selectedBeamIds, selectedRopeIds } = useEditor.getState();
+      if (selectedBeamIds.length >= 1 || selectedRopeIds.length >= 1) {
         setKnotDialogOpen(true);
       }
     };
@@ -83,6 +91,18 @@ export function Toolbar() {
         onChange={(e) => useEditor.getState().renameProject(e.target.value)}
       />
 
+      <div className="active-step" aria-live="polite">
+        <span className="active-step__label">Actieve stap</span>
+        <strong>
+          {activeStep
+            ? activeStep.index === 0
+              ? activeStep.title
+              : `${activeStep.index}. ${activeStep.title}`
+            : 'Geen stap'}
+        </strong>
+        {previewStep === null && <span className="active-step__mode">laatste stap</span>}
+      </div>
+
       <div className="toolbar__group">
         <button className="btn" disabled={!canUndo} onClick={() => useEditor.getState().undo()}>
           Ongedaan
@@ -110,9 +130,9 @@ export function Toolbar() {
         <button
           className={boxSelectMode ? 'btn btn--active' : 'btn'}
           onClick={() => useEditor.getState().toggleBoxSelect()}
-          title="Selectiekader (B) of houd Shift ingedrukt tijdens slepen"
+          title="Selectiekader (beta) (B) of houd Shift ingedrukt tijdens slepen"
         >
-          Selectiekader
+          Selectiekader (beta)
         </button>
       </div>
 
@@ -136,12 +156,12 @@ export function Toolbar() {
       <div className="toolbar__group">
         <button
           className="btn btn--primary"
-          disabled={selectedBeamIds.length < 1}
+          disabled={selectedBeamIds.length === 0 && selectedRopeIds.length === 0}
           onClick={() => setKnotDialogOpen(true)}
           title={
-            selectedBeamIds.length <= 1
-              ? 'Knoop maken op balk (K)'
-              : 'Knoop maken tussen geselecteerde balken (K)'
+            selectedBeamIds.length + selectedRopeIds.length <= 1
+              ? 'Knoop maken op balk of touw (K)'
+              : 'Knoop maken tussen geselecteerde elementen (K)'
           }
         >
           Knoop maken
@@ -201,11 +221,27 @@ export function Toolbar() {
         <button className="btn btn--primary" disabled={busy} onClick={exportManual}>
           {busy ? 'Bezig…' : 'Handleiding (PDF)'}
         </button>
+        <button
+          ref={helpButtonRef}
+          className="btn btn--help"
+          onClick={() => setHelpOpen(true)}
+          aria-label="Help openen"
+          title="Help en uitleg openen"
+        >
+          ?
+        </button>
       </div>
+
+      <HelpDialog
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        triggerRef={helpButtonRef}
+      />
 
       <KnotDialog
         open={knotDialogOpen}
         beamCount={selectedBeamIds.length}
+        ropeCount={selectedRopeIds.length}
         onCancel={() => setKnotDialogOpen(false)}
         onConfirm={(name) => {
           useEditor.getState().createLashing(name);
