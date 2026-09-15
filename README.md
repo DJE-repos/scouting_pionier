@@ -3,6 +3,8 @@
 Web-app om scoutingconstructies in 3D te pionieren: balken plaatsen, met benoemde knopen
 verbinden, assemblies hergebruiken, materiaalstaat aflezen en exporteren naar IFC en PDF.
 
+Use the tool at https://dje-repos.github.io/scouting_pionier/
+
 ## Starten
 
 ```powershell
