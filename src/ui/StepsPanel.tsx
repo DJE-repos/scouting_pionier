@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useEditor } from '../store/projectStore';
 import { resolveModel } from '../model/resolve';
 import { anglesForStep, anglesFromDirection, formatAngles } from '../model/views';
-import { currentViewDirection } from '../scene/snapshot';
+import { currentCameraPose, currentViewDirection } from '../scene/snapshot';
 
 export function StepsPanel() {
   const project = useEditor((s) => s.project);
@@ -36,6 +36,12 @@ export function StepsPanel() {
   const captureAngles = () => {
     const direction = currentViewDirection();
     return direction ? anglesFromDirection(direction) : null;
+  };
+  const captureStepView = () => {
+    const pose = currentCameraPose();
+    const direction = currentViewDirection();
+    const angles = direction ? anglesFromDirection(direction) : null;
+    return pose && angles ? { ...pose, ...angles } : null;
   };
 
   return (
@@ -173,7 +179,7 @@ export function StepsPanel() {
                 </label>
                 <span className="hint step__view">
                   Aanzicht {formatAngles(anglesForStep(step, project.settings))}
-                  {step.viewAzimuthDeg === undefined ? ' (standaard)' : ''}
+                  {step.viewAzimuthDeg === undefined && !step.cameraPosition ? ' (standaard)' : ''}
                 </span>
               </div>
 
@@ -181,13 +187,13 @@ export function StepsPanel() {
                 <button
                   className="btn btn--tiny"
                   onClick={() => {
-                    const angles = captureAngles();
-                    if (angles) setStepView(step.index, angles);
+                    const view = captureStepView();
+                    if (view) setStepView(step.index, view);
                   }}
                 >
                   Camera
                 </button>
-                {step.viewAzimuthDeg !== undefined && (
+                {(step.viewAzimuthDeg !== undefined || step.cameraPosition !== undefined) && (
                   <button className="btn btn--tiny" onClick={() => setStepView(step.index, null)}>
                     Standaard
                   </button>

@@ -142,7 +142,7 @@ function GeoBuilding({ data }: { data: BuildingMeshData }) {
   return <mesh geometry={geometry} castShadow receiveShadow><meshStandardMaterial color="#b8b9b0" roughness={0.95} side={DoubleSide} transparent={false} opacity={1} depthWrite /></mesh>;
 }
 
-export function GeoContext() {
+export function GeoContext({ visible = true }: { visible?: boolean }) {
   const settings = useEditor((state) => state.project.settings);
   const [buildings, setBuildings] = useState<BuildingMeshData[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -164,7 +164,7 @@ export function GeoContext() {
   }, [settings.georeferenceEnabled, settings.georeferenceBuildings, settings.georeferenceX, settings.georeferenceY, bagExtent]);
 
   if (!settings.georeferenceEnabled) return null;
-  return <group name="georeference-context">
+  return <group name="georeference-context" visible={visible}>
     {settings.georeferenceImagery && <GeoImage url={imageUrl} size={size} />}
     {settings.georeferenceImagery && <GeoImage url={labelUrl} size={size} positionY={-0.003} opacity={1} />}
     {buildings.map((building) => <GeoBuilding key={building.id} data={building} />)}

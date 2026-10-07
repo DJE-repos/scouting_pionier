@@ -83,6 +83,8 @@ export interface AssemblyInstance {
   position: Vec3;
   quaternion: Quat;
   stepIndex: number;
+  /** Stap waarin deze tijdelijke assemblyvoorziening wordt verwijderd. */
+  removedAtStep?: number;
   stepTransforms?: StepTransform[];
 }
 
@@ -101,6 +103,21 @@ export interface BuildStep {
   /** Eigen kijkrichting voor de aanzichten van deze stap; leeg = projectinstelling. */
   viewAzimuthDeg?: number;
   viewElevationDeg?: number;
+  /** Volledig camera-aanzicht voor deze stap; optioneel voor oude projectbestanden. */
+  cameraPosition?: Vec3;
+  cameraTarget?: Vec3;
+  cameraUp?: Vec3;
+}
+
+export interface CameraPose {
+  position: Vec3;
+  target: Vec3;
+  up: Vec3;
+}
+
+export interface CapturedStepView extends CameraPose {
+  azimuthDeg: number;
+  elevationDeg: number;
 }
 
 export type MeasurementType = 'distance' | 'height' | 'angle';

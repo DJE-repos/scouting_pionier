@@ -12,8 +12,11 @@ interface Props {
   /** Wordt in de actieve bouwstap gelegd. */
   highlighted?: boolean;
   dimmed?: boolean;
+  removing?: boolean;
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void;
 }
+
+const REMOVING = '#ff0000';
 
 export function LashingMarker({
   lashing,
@@ -22,6 +25,7 @@ export function LashingMarker({
   selected,
   highlighted = false,
   dimmed = false,
+  removing = false,
   onPointerDown,
 }: Props) {
   const position = useMemo(() => {
@@ -45,16 +49,17 @@ export function LashingMarker({
   }, [lashing, beams, ropes]);
 
   if (!position) return null;
+  const opacity = (dimmed ? 0.12 : removing ? 0.4 : 1) * (lashing.animationOpacity ?? 1);
 
   return (
     <mesh name={`lashing:${lashing.id}`} position={position} onPointerDown={onPointerDown}>
       <sphereGeometry args={[highlighted ? 0.13 : 0.09, 16, 16]} />
       <meshStandardMaterial
-        key={dimmed ? 'dim' : 'solid'}
-        color={selected ? '#38bdf8' : lashing.color}
-        transparent={dimmed}
-        opacity={dimmed ? 0.12 : 1}
-        depthWrite={!dimmed}
+        key={`${dimmed ? 'dim' : 'solid'}-${opacity < 1 ? 'fade' : 'opaque'}`}
+        color={removing ? REMOVING : selected ? '#38bdf8' : lashing.color}
+        transparent={opacity < 1}
+        opacity={opacity}
+        depthWrite={opacity >= 1}
       />
     </mesh>
   );

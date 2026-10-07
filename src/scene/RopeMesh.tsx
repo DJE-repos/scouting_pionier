@@ -37,6 +37,7 @@ export function RopeMesh({
 
   // hitRadius zorgt voor een ruim trefgebied (minimaal 5cm straal / 10cm diameter) bij dunne touwen
   const hitRadius = Math.max(radius * 4, 0.05);
+  const opacity = (dimmed ? 0.15 : 1) * (rope.animationOpacity ?? 1);
 
   return (
     <group
@@ -48,13 +49,13 @@ export function RopeMesh({
       <mesh>
         <cylinderGeometry args={[radius * (highlighted ? 1.4 : 1), radius * (highlighted ? 1.4 : 1), length, 12]} />
         <meshStandardMaterial
-          key={dimmed ? 'dim' : 'solid'}
+          key={`${dimmed ? 'dim' : 'solid'}-${opacity < 1 ? 'fade' : 'opaque'}`}
           color={selected ? '#38bdf8' : rope.color ?? '#d97706'}
           roughness={0.7}
           metalness={0.05}
-          transparent={dimmed}
-          opacity={dimmed ? 0.15 : 1}
-          depthWrite={!dimmed}
+          transparent={opacity < 1}
+          opacity={opacity}
+          depthWrite={opacity >= 1}
         />
       </mesh>
       {/* Onzichtbare grotere cilinder voor trefzeker klikken/selecteren */}

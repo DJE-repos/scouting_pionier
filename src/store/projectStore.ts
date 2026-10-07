@@ -6,6 +6,7 @@ import type {
   AssemblyInstance,
   AssemblyLibrary,
   Beam,
+  CapturedStepView,
   ContextObject,
   Lashing,
   LengthAnchor,
@@ -64,6 +65,9 @@ interface EditorState {
   cameraProjection: CameraProjection;
   /** Toon alleen elementen t/m deze stap; null = alles. */
   previewStep: number | null;
+  cameraFocusRequest: number;
+  /** Fractionele bouwstap voor afspelen en videoscrubbing; null = gewone preview. */
+  animationTimeStep: number | null;
   measurementMode: MeasurementType | null;
   measurementPoints: Vec3[];
   /** Id van de assembly die in de assembly-editor bewerkt wordt. */
@@ -106,6 +110,7 @@ interface EditorState {
   toggleBoxSelect: () => void;
   setCameraProjection: (projection: CameraProjection) => void;
   setPreviewStep: (step: number | null) => void;
+  setAnimationTimeStep: (step: number | null) => void;
   setEditingAssembly: (id: string | null) => void;
 
   updateSettings: (patch: Partial<ProjectSettings>) => void;
@@ -117,7 +122,7 @@ interface EditorState {
   setStepDescription: (index: number, description: string) => void;
   setStepIncludeContext: (index: number, includeContext: boolean) => void;
   setStepTemporary: (index: number, temporary: boolean) => void;
-  setStepView: (index: number, angles: { azimuthDeg: number; elevationDeg: number } | null) => void;
+  setStepView: (index: number, view: CapturedStepView | null) => void;
   assignSelectionToStep: (index: number) => void;
   removeSelectedTemporaryMeasures: (index: number) => void;
   setMeasurementMode: (mode: MeasurementType | null) => void;
@@ -169,6 +174,8 @@ export const useEditor = create<EditorState>()(
     boxSelectMode: false,
     cameraProjection: 'perspective',
     previewStep: null,
+    cameraFocusRequest: 0,
+    animationTimeStep: null,
     measurementMode: null,
     measurementPoints: [],
     editingAssemblyId: null,
@@ -831,8 +838,14 @@ export const useEditor = create<EditorState>()(
     setPreviewStep: (step) =>
       set((s) => {
         s.previewStep = step;
+        s.cameraFocusRequest += 1;
+        s.animationTimeStep = null;
         s.measurementMode = null;
         s.measurementPoints = [];
+      }),
+    setAnimationTimeStep: (step) =>
+      set((s) => {
+        s.animationTimeStep = step;
       }),
     setMeasurementMode: (mode) =>
       set((s) => {
@@ -1015,12 +1028,15 @@ export const useEditor = create<EditorState>()(
       });
     },
 
-    setStepView: (index, angles) =>
+    setStepView: (index, view) =>
       set((s) => {
         const step = s.project.steps.find((st) => st.index === index);
         if (!step) return;
-        step.viewAzimuthDeg = angles?.azimuthDeg;
-        step.viewElevationDeg = angles?.elevationDeg;
+        step.viewAzimuthDeg = view?.azimuthDeg;
+        step.viewElevationDeg = view?.elevationDeg;
+        step.cameraPosition = view?.position;
+        step.cameraTarget = view?.target;
+        step.cameraUp = view?.up;
       }),
 
     assignSelectionToStep: (index) => {
@@ -1045,11 +1061,36 @@ export const useEditor = create<EditorState>()(
 
     removeSelectedTemporaryMeasures: (index) => {
       const state = get();
-      const hasSelection =
-        state.selectedBeamIds.length > 0 ||
-        state.selectedLashingIds.length > 0 ||
-        state.selectedRopeIds.length > 0;
-      if (!hasSelection) return;
+      const selectedAssemblyIds = new Set<string>(state.selectedInstanceIds);
+      for (const id of [
+        ...state.selectedBeamIds,
+        ...state.selectedLashingIds,
+        ...state.selectedRopeIds,
+      ]) {
+        const separator = id.indexOf(':');
+        if (separator !== -1) selectedAssemblyIds.add(id.slice(0, separator));
+      }
+      const temporaryAssemblyIds = new Set(
+        state.project.assemblyInstances
+          .filter(
+            (instance) =>
+              selectedAssemblyIds.has(instance.id) &&
+              state.library.defs.find((def) => def.id === instance.defId)?.temporaryMeasure,
+          )
+          .map((instance) => instance.id),
+      );
+      const hasTemporarySelection =
+        state.project.beams.some(
+          (beam) => state.selectedBeamIds.includes(beam.id) && beam.temporaryMeasure,
+        ) ||
+        state.project.lashings.some(
+          (lashing) => state.selectedLashingIds.includes(lashing.id) && lashing.temporaryMeasure,
+        ) ||
+        (state.project.ropes ?? []).some(
+          (rope) => state.selectedRopeIds.includes(rope.id) && rope.temporaryMeasure,
+        ) ||
+        temporaryAssemblyIds.size > 0;
+      if (!hasTemporarySelection) return;
       state.commit();
       set((s) => {
         for (const beam of s.project.beams) {
@@ -1066,6 +1107,9 @@ export const useEditor = create<EditorState>()(
           if (s.selectedRopeIds.includes(rope.id) && rope.temporaryMeasure) {
             rope.removedAtStep = index;
           }
+        }
+        for (const instance of s.project.assemblyInstances) {
+          if (temporaryAssemblyIds.has(instance.id)) instance.removedAtStep = index;
         }
       });
     },

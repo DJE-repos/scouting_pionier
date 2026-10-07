@@ -3,7 +3,9 @@ export function downloadBlob(blob: Blob, filename: string) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   // Direct intrekken kan de download in sommige browsers afbreken.
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

@@ -24,11 +24,13 @@ export interface ResolvedBeam extends Beam {
   assemblyName?: string;
   /** Hoort bij een tussenstap; telt niet mee in de totale materiaalstaat. */
   temporary: boolean;
+  animationOpacity?: number;
 }
 
 export interface ResolvedLashing extends Lashing {
   instanceId?: string;
   temporary: boolean;
+  animationOpacity?: number;
 }
 
 export interface ResolvedRope extends Rope {
@@ -38,6 +40,7 @@ export interface ResolvedRope extends Rope {
   totalRopeM: number;
   fromPosition: [number, number, number];
   toPosition: [number, number, number];
+  animationOpacity?: number;
 }
 
 export interface ResolvedModel {
@@ -135,6 +138,7 @@ export function resolveModel(
   project: Project,
   library: AssemblyLibrary,
   upToStep: number | null = null,
+  showRemovedAtStep = false,
 ): ResolvedModel {
   const temp = temporarySteps(project);
   const mark = <T extends { stepIndex: number }>(item: T) => ({
@@ -155,13 +159,14 @@ export function resolveModel(
     beams.push(
       ...expanded.beams.map((b) => ({
         ...mark(b),
+        removedAtStep: instance.removedAtStep ?? b.removedAtStep,
         temporaryMeasure: def.temporaryMeasure || b.temporaryMeasure,
         instanceId: instance.id,
         assemblyName: def.name,
       })),
     );
-    lashings.push(...expanded.lashings.map((l) => ({ ...mark(l), temporaryMeasure: def.temporaryMeasure || l.temporaryMeasure, instanceId: instance.id })));
-    rawRopes.push(...expanded.ropes.map((r) => ({ ...mark(r), temporaryMeasure: def.temporaryMeasure || r.temporaryMeasure, instanceId: instance.id })));
+    lashings.push(...expanded.lashings.map((l) => ({ ...mark(l), removedAtStep: instance.removedAtStep ?? l.removedAtStep, temporaryMeasure: def.temporaryMeasure || l.temporaryMeasure, instanceId: instance.id })));
+    rawRopes.push(...expanded.ropes.map((r) => ({ ...mark(r), removedAtStep: instance.removedAtStep ?? r.removedAtStep, temporaryMeasure: def.temporaryMeasure || r.temporaryMeasure, instanceId: instance.id })));
   }
 
   const knotPositionMap = new Map<string, Vector3>();
@@ -233,7 +238,8 @@ export function resolveModel(
 
   // Voorgebouwde onderdelen horen alleen bij hun eigen stap; daarna staat het echte werk er.
   const visible = <T extends { stepIndex: number; temporary: boolean; removedAtStep?: number }>(item: T) =>
-    item.removedAtStep !== undefined && item.removedAtStep <= upToStep
+    item.removedAtStep !== undefined &&
+    (showRemovedAtStep ? item.removedAtStep < upToStep : item.removedAtStep <= upToStep)
       ? false
       : item.temporary
         ? item.stepIndex === upToStep
@@ -244,4 +250,96 @@ export function resolveModel(
     lashings: lashings.filter(visible),
     ropes: ropes.filter(visible),
   };
+}
+
+/** Resolve a fractional position in the build sequence, interpolating items present at both ends. */
+export function resolveAnimatedModel(
+  project: Project,
+  library: AssemblyLibrary,
+  timeStep: number,
+  showRemovedAtStep = false,
+): ResolvedModel {
+  const lastStep = Math.max(0, project.steps.length - 1);
+  const clampedTime = Math.max(0, Math.min(lastStep, Number.isFinite(timeStep) ? timeStep : 0));
+  const fromStep = Math.floor(clampedTime);
+  const toStep = Math.min(lastStep, fromStep + 1);
+  const progress = clampedTime - fromStep;
+  const from = resolveModel(project, library, fromStep, showRemovedAtStep);
+  if (fromStep === toStep || progress === 0) return from;
+
+  const to = resolveModel(project, library, toStep, showRemovedAtStep);
+  const toBeams = new Map(
+    to.beams.filter((beam) => beam.removedAtStep !== toStep).map((beam) => [beam.id, beam]),
+  );
+  const fromBeamIds = new Set(from.beams.map((beam) => beam.id));
+  const beams = from.beams.map((beam) => {
+    const target = toBeams.get(beam.id);
+    if (!target) return { ...beam, animationOpacity: 1 - progress };
+    const position = beam.position.map((value, index) =>
+      value + (target.position[index] - value) * progress,
+    ) as Beam['position'];
+    const quaternion = new Quaternion(...beam.quaternion).slerp(
+      new Quaternion(...target.quaternion),
+      progress,
+    );
+    return {
+      ...beam,
+      position,
+      quaternion: [quaternion.x, quaternion.y, quaternion.z, quaternion.w] as Beam['quaternion'],
+      animationOpacity: 1,
+    };
+  });
+  beams.push(
+    ...to.beams
+      .filter((beam) => !fromBeamIds.has(beam.id) && beam.removedAtStep !== toStep)
+      .map((beam) => ({ ...beam, animationOpacity: progress })),
+  );
+
+  const fromLashingIds = new Set(from.lashings.map((lashing) => lashing.id));
+  const toLashings = new Map(
+    to.lashings
+      .filter((lashing) => lashing.removedAtStep !== toStep)
+      .map((lashing) => [lashing.id, lashing]),
+  );
+  const lashings = from.lashings.map((lashing) => {
+    const target = toLashings.get(lashing.id);
+    if (!target) return { ...lashing, animationOpacity: 1 - progress };
+    return {
+      ...lashing,
+      localOffset: toVec3(
+        new Vector3(...lashing.localOffset).lerp(new Vector3(...target.localOffset), progress),
+      ),
+      animationOpacity: 1,
+    };
+  });
+  lashings.push(
+    ...to.lashings
+      .filter((lashing) => !fromLashingIds.has(lashing.id) && lashing.removedAtStep !== toStep)
+      .map((lashing) => ({ ...lashing, animationOpacity: progress })),
+  );
+
+  const fromRopeIds = new Set(from.ropes.map((rope) => rope.id));
+  const toRopes = new Map(
+    to.ropes.filter((rope) => rope.removedAtStep !== toStep).map((rope) => [rope.id, rope]),
+  );
+  const ropes = from.ropes.map((rope) => {
+    const target = toRopes.get(rope.id);
+    if (!target) return { ...rope, animationOpacity: 1 - progress };
+    const fromPosition = toVec3(
+      new Vector3(...rope.fromPosition).lerp(new Vector3(...target.fromPosition), progress),
+    );
+    const toPosition = toVec3(
+      new Vector3(...rope.toPosition).lerp(new Vector3(...target.toPosition), progress),
+    );
+    const lengthM = rope.lengthM + (target.lengthM - rope.lengthM) * progress;
+    const totalRopeM = rope.totalRopeM + (target.totalRopeM - rope.totalRopeM) * progress;
+    return { ...rope, fromPosition, toPosition, lengthM, totalRopeM, animationOpacity: 1 };
+  });
+  ropes.push(
+    ...to.ropes
+      .filter((rope) => !fromRopeIds.has(rope.id) && rope.removedAtStep !== toStep)
+      .map((rope) => ({ ...rope, animationOpacity: progress })),
+  );
+
+  return { beams, lashings, ropes };
 }

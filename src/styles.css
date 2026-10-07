@@ -80,6 +80,33 @@ body,
   margin-left: auto;
 }
 
+.toolbar__timeline {
+  gap: 5px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.timeline-slider {
+  width: min(150px, 22vw);
+  accent-color: var(--accent);
+}
+
+.timeline-position {
+  min-width: 48px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.toolbar__error {
+  max-width: 220px;
+  color: #b42318;
+  font-size: 11px;
+}
+
 .active-step {
   display: flex;
   align-items: baseline;

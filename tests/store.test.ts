@@ -138,6 +138,16 @@ describe('undo/redo', () => {
 });
 
 describe('bouwstappen', () => {
+  it('vraagt bij iedere voorbeeldstapselectie een camera-focus aan', () => {
+    store().addStep('Fundering');
+
+    store().setPreviewStep(1);
+    expect(store().cameraFocusRequest).toBe(1);
+
+    store().setPreviewStep(1);
+    expect(store().cameraFocusRequest).toBe(2);
+  });
+
   it('slaat een toelichting per stap op', () => {
     store().setStepDescription(0, 'Plaats eerst de staanders.');
 
@@ -279,6 +289,22 @@ describe('assemblies', () => {
     const bom = computeBillOfMaterials(model);
     expect(bom.totalBeams).toBe(0);
     expect(bom.totalMeasureBeams).toBe(1);
+  });
+
+  it('verwijdert een geselecteerde tijdelijke assembly uit de gekozen stap', () => {
+    const beamId = store().addBeam(4, [0, 0, 0], alongX);
+    store().setSelection([beamId]);
+    store().saveSelectionAsAssembly('schoor', true);
+    store().deleteSelected();
+    store().addStep('Tussenstap');
+    store().addAssemblyInstance(store().library.defs[0].id, [0, 0, 0]);
+
+    const placedBeam = resolveModel(store().project, store().library).beams[0];
+    store().setSelection([placedBeam.id]);
+    store().removeSelectedTemporaryMeasures(1);
+
+    expect(store().project.assemblyInstances[0].removedAtStep).toBe(1);
+    expect(resolveModel(store().project, store().library, 1).beams).toHaveLength(0);
   });
 
     it('versioneert een assemblytransformatie per stap', () => {

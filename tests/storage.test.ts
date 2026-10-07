@@ -34,6 +34,27 @@ function importedProjectWithoutDeparturePoint() {
 }
 
 describe('projectmigratie', () => {
+  it('bewaart volledige camera-overrides per stap in het pionierbestand', () => {
+    const project = newProject('Camera override');
+    project.steps.push({
+      index: 1,
+      title: 'Camera test',
+      viewAzimuthDeg: 90,
+      viewElevationDeg: 25,
+      cameraPosition: [8, 5, -3],
+      cameraTarget: [1, 2, 0],
+      cameraUp: [0, 1, 0],
+    });
+
+    const imported = deserialize(serialize(project, { defs: [] })).project.steps[1];
+
+    expect(imported).toMatchObject({
+      cameraPosition: [8, 5, -3],
+      cameraTarget: [1, 2, 0],
+      cameraUp: [0, 1, 0],
+    });
+  });
+
   it('voegt een vertrekpunt toe en schuift stapverwijzingen op', () => {
     const { project } = deserialize(serialize(importedProjectWithoutDeparturePoint(), { defs: [] }));
 

@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { GizmoHelper, GizmoViewport, Grid, OrbitControls, TransformControls } from '@react-three/drei';
 import { Matrix4, Object3D, Quaternion, Vector3 } from 'three';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useEditor } from '../store/projectStore';
-import { resolveModel, resolveStepTransform } from '../model/resolve';
+import { resolveAnimatedModel, resolveModel, resolveStepTransform } from '../model/resolve';
+import {
+  anglesForStep,
+  animationTimelineFrameAtTime,
+  cameraPoseAtTimeStep,
+  viewOrientation,
+} from '../model/views';
 import {
   beamEndpoints,
   beamLocalToWorld,
@@ -26,6 +33,7 @@ import { registerCanvas } from './snapshot';
 import { MeasurementToolbar } from '../ui/MeasurementToolbar';
 import { ContextObjects } from './ContextObjects';
 import { GeoContext } from './GeoContext';
+import { StepBanner } from './StepBanner';
 
 export interface DragRect {
   left: number;
@@ -75,11 +83,21 @@ export function Viewport() {
 
 function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null) => void }) {
   const { gl, camera, size, scene } = useThree();
-  useEffect(() => registerCanvas(gl, camera, scene), [gl, camera, scene]);
 
   const project = useEditor((s) => s.project);
   const library = useEditor((s) => s.library);
   const previewStep = useEditor((s) => s.previewStep);
+  const animationTimeStep = useEditor((s) => s.animationTimeStep);
+  const animationFrame = animationTimeStep === null
+    ? null
+    : animationTimelineFrameAtTime(project.steps, animationTimeStep);
+  const displayStep = animationFrame?.bannerStepIndex ?? previewStep;
+  const bannerStep = animationFrame
+    ? project.steps.find((step) => step.index === animationFrame.bannerStepIndex)
+    : undefined;
+  const includeContext = displayStep === null
+    ? true
+    : project.steps.find((step) => step.index === Math.floor(displayStep))?.includeContext ?? false;
   const selectedBeamIds = useEditor((s) => s.selectedBeamIds);
   const selectedLashingIds = useEditor((s) => s.selectedLashingIds);
   const selectedInstanceIds = useEditor((s) => s.selectedInstanceIds);
@@ -90,12 +108,20 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
   const settings = project.settings;
 
   const model = useMemo(
-    () => resolveModel(project, library, previewStep),
-    [project, library, previewStep],
+    () => animationTimeStep === null
+      ? resolveModel(project, library, previewStep, previewStep !== null)
+      : resolveAnimatedModel(project, library, animationFrame!.modelTimeStep, true),
+    [project, library, previewStep, animationTimeStep, animationFrame],
   );
   const [gizmoProxy] = useState(() => new Object3D());
   const gizmoControls = useRef<GizmoControls | null>(null);
+  const orbitControls = useRef<OrbitControlsImpl | null>(null);
   const [isDragSelecting, setIsDragSelecting] = useState(false);
+
+  useEffect(
+    () => registerCanvas(gl, camera, scene, () => orbitControls.current?.target.clone() ?? null),
+    [gl, camera, scene],
+  );
 
   const select = useEditor((s) => s.select);
   const clearSelection = useEditor((s) => s.clearSelection);
@@ -324,10 +350,12 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
 
   // Voorgebouwde onderdelen (tussenstappen) horen alleen bij hun eigen stap en zijn daarbuiten verborgen.
   const isHidden = (item: { stepIndex: number; temporary: boolean }) =>
-    item.temporary ? item.stepIndex !== previewStep : false;
+    item.temporary ? item.stepIndex !== Math.floor(displayStep ?? -1) : false;
   const isDimmed = (item: { stepIndex: number; temporary: boolean }) =>
-    previewStep !== null && item.stepIndex > previewStep;
-  const isNew = (stepIndex: number) => previewStep !== null && stepIndex === previewStep;
+    animationTimeStep === null && displayStep !== null && item.stepIndex > displayStep;
+  const isNew = (stepIndex: number) => displayStep !== null && stepIndex === Math.floor(displayStep);
+  const isRemoving = (item: { removedAtStep?: number }) =>
+    displayStep !== null && item.removedAtStep === Math.floor(displayStep);
 
   return (
     <>
@@ -358,7 +386,8 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
         followCamera={false}
       />
 
-      <GeoContext />
+      <GeoContext visible={includeContext} />
+      <StepBanner step={bannerStep} visible={animationTimeStep !== null} />
 
       <mesh
         name="ground"
@@ -372,22 +401,24 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
           color="#6f9f58"
           roughness={1}
           metalness={0}
-          transparent={settings.georeferenceEnabled && settings.georeferenceImagery}
-          opacity={settings.georeferenceEnabled && settings.georeferenceImagery ? 0 : 1}
-          depthWrite={!(settings.georeferenceEnabled && settings.georeferenceImagery)}
+          transparent={!includeContext || (settings.georeferenceEnabled && settings.georeferenceImagery)}
+          opacity={!includeContext || (settings.georeferenceEnabled && settings.georeferenceImagery) ? 0 : 1}
+          depthWrite={includeContext && !(settings.georeferenceEnabled && settings.georeferenceImagery)}
         />
       </mesh>
 
-      <ContextObjects
-        objects={project.contextObjects}
-        selectedIds={selectedContextObjectIds}
-        onPointerDown={(object, event) => {
-          if (pendingLengthM !== null || pendingContextObjectType !== null || gizmoHasPointer()) return;
-          if (useEditor.getState().boxSelectMode) return;
-          event.stopPropagation();
-          select('contextObject', object.id, event.shiftKey);
-        }}
-      />
+      {includeContext && (
+        <ContextObjects
+          objects={project.contextObjects}
+          selectedIds={selectedContextObjectIds}
+          onPointerDown={(object, event) => {
+            if (pendingLengthM !== null || pendingContextObjectType !== null || gizmoHasPointer()) return;
+            if (useEditor.getState().boxSelectMode) return;
+            event.stopPropagation();
+            select('contextObject', object.id, event.shiftKey);
+          }}
+        />
+      )}
 
       {model.beams.map((beam) =>
         isHidden(beam) ? null : (
@@ -401,6 +432,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             dimmed={isDimmed(beam)}
             highlighted={isNew(beam.stepIndex)}
             muted={previewStep !== null && beam.stepIndex < previewStep}
+            removing={isRemoving(beam)}
             onPointerDown={(e) => {
               if (handleMeasurementPoint(e.point)) { e.stopPropagation(); return; }
               if (pendingLengthM !== null || gizmoHasPointer()) return;
@@ -422,6 +454,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             selected={selectedLashingIds.includes(lashing.id)}
             dimmed={isDimmed(lashing)}
             highlighted={isNew(lashing.stepIndex)}
+            removing={isRemoving(lashing)}
             onPointerDown={(e) => {
               if (handleMeasurementPoint(e.point)) { e.stopPropagation(); return; }
               if (gizmoHasPointer()) return;
@@ -456,8 +489,10 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
       <primitive object={gizmoProxy} />
       <MeasurementOverlay />
 
+      <StepCamera controlsRef={orbitControls} />
       <OrbitControls
-        enabled={!isDragSelecting}
+        ref={orbitControls}
+        enabled={!isDragSelecting && animationTimeStep === null}
         makeDefault
         enableDamping
         dampingFactor={0.12}
@@ -468,6 +503,85 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
       </GizmoHelper>
     </>
   );
+}
+
+interface CameraSnapshot {
+  position: Vector3;
+  up: Vector3;
+  target: Vector3;
+  enableDamping: boolean;
+}
+
+function StepCamera({ controlsRef }: { controlsRef: RefObject<OrbitControlsImpl | null> }) {
+  const camera = useThree((state) => state.camera);
+  const originalCamera = useRef<CameraSnapshot | null>(null);
+  const lastFocusRequest = useRef(0);
+
+  useFrame(() => {
+    const { animationTimeStep, cameraFocusRequest, previewStep, project } = useEditor.getState();
+    const controls = controlsRef.current;
+    if (animationTimeStep === null) {
+      const snapshot = originalCamera.current;
+      if (snapshot && controls) {
+        camera.position.copy(snapshot.position);
+        camera.up.copy(snapshot.up);
+        controls.target.copy(snapshot.target);
+        controls.enableDamping = false;
+        controls.update();
+        controls.enableDamping = snapshot.enableDamping;
+        originalCamera.current = null;
+      }
+      if (!controls || cameraFocusRequest === lastFocusRequest.current) return;
+      lastFocusRequest.current = cameraFocusRequest;
+      if (previewStep === null) return;
+
+      const step = project.steps.find((item) => item.index === previewStep);
+      if (step?.cameraPosition && step.cameraTarget) {
+        const enableDamping = controls.enableDamping;
+        controls.enableDamping = false;
+        camera.position.fromArray(step.cameraPosition);
+        camera.up.fromArray(step.cameraUp ?? [0, 1, 0]);
+        controls.target.fromArray(step.cameraTarget);
+        controls.update();
+        controls.enableDamping = enableDamping;
+        return;
+      }
+      const angles = anglesForStep(step, project.settings);
+      const { direction, up } = viewOrientation('Isometrisch', angles);
+      const enableDamping = controls.enableDamping;
+      controls.enableDamping = false;
+      camera.up.copy(up);
+      controls.setAzimuthalAngle(Math.atan2(direction.x, direction.z));
+      controls.setPolarAngle(Math.acos(Math.max(-1, Math.min(1, direction.y))));
+      controls.update();
+      controls.enableDamping = enableDamping;
+      return;
+    }
+    if (!controls) return;
+
+    if (!originalCamera.current) {
+      originalCamera.current = {
+        position: camera.position.clone(),
+        up: camera.up.clone(),
+        target: controls.target.clone(),
+        enableDamping: controls.enableDamping,
+      };
+      controls.enableDamping = false;
+    }
+
+    const frame = animationTimelineFrameAtTime(project.steps, animationTimeStep);
+    const pose = cameraPoseAtTimeStep(project.steps, project.settings, frame.modelTimeStep, {
+      position: originalCamera.current.position.toArray(),
+      target: originalCamera.current.target.toArray(),
+      up: originalCamera.current.up.toArray(),
+    });
+    camera.position.fromArray(pose.position);
+    camera.up.fromArray(pose.up);
+    controls.target.fromArray(pose.target);
+    controls.update();
+  });
+
+  return null;
 }
 
 /** Losse velden van TransformControls die verraden of de gizmo de muis heeft. */
@@ -499,6 +613,7 @@ function TransformGizmo({
   const selectedRopeIds = useEditor((s) => s.selectedRopeIds);
   const selectedContextObjectIds = useEditor((s) => s.selectedContextObjectIds);
   const previewStep = useEditor((s) => s.previewStep);
+  const animationTimeStep = useEditor((s) => s.animationTimeStep);
 
   const model = useMemo(
     () => resolveModel(project, library, previewStep),
@@ -597,7 +712,7 @@ function TransformGizmo({
 
   const targetItem = looseBeam ?? resolvedInstance ?? contextObject;
 
-  if (boxSelectMode || (!isGroup && !targetItem && !lashingPosition)) return null;
+  if (animationTimeStep !== null || boxSelectMode || (!isGroup && !targetItem && !lashingPosition)) return null;
 
   if (!dragging.current) {
     if (isGroup) {

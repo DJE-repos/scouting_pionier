@@ -171,14 +171,14 @@ function cameraForView(view: ViewName, box: Box3, angles: ViewAngles, aspect: nu
   return camera;
 }
 
-/** Maaiveld en raster zijn hulpmiddelen in de app; in het boekje leiden ze alleen af. */
+/** Verberg editorhulpen; het maaiveld hoort bij de context van een stap. */
 function withoutSceneHelpers<T>(scene: Scene, render: () => T, includeContext = true): T {
   const hidden: Object3D[] = [];
   scene.traverse((object) => {
     if (
-      (object.name === 'ground' || object.name === 'grid' || object.name === 'measurement-overlay' ||
+      (object.name === 'grid' || object.name === 'measurement-overlay' ||
         (!includeContext &&
-          (object.name === 'context-object' || object.name === 'georeference-context'))) &&
+          (object.name === 'ground' || object.name === 'context-object' || object.name === 'georeference-context'))) &&
       object.visible
     ) {
       object.visible = false;
