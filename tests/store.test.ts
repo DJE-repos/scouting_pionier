@@ -333,6 +333,34 @@ describe('assemblies', () => {
     expect(store().project.beams).toHaveLength(2);
   });
 
+  it('behoudt niet-gerelateerde knopen en touwen bij verwijderen uit uitgepakte assembly', () => {
+    const a = store().addBeam(4, [0, 0, 0], alongX);
+    const b = store().addBeam(4, [0, 5, 0], alongX);
+    const c = store().addBeam(4, [0, 10, 0], alongX);
+
+    store().setSelection([a]);
+    const knotA = store().createLashing('mastworp')!;
+    store().setSelection([b]);
+    const knotB = store().createLashing('mastworp')!;
+    store().createRope(knotA, knotB);
+
+    store().setSelection([a, b, c]);
+    store().saveSelectionAsAssembly('testassembly');
+    const defId = store().library.defs[0].id;
+    store().deleteSelected();
+    store().addAssemblyInstance(defId, [0, 0, 0]);
+
+    const instanceId = store().project.assemblyInstances[0].id;
+    store().explodeInstance(instanceId);
+    const unrelatedBeamId = store().selectedBeamIds[2];
+    store().setSelection([unrelatedBeamId]);
+    store().deleteSelected();
+
+    expect(store().project.beams).toHaveLength(2);
+    expect(store().project.lashings).toHaveLength(2);
+    expect(store().project.ropes).toHaveLength(1);
+  });
+
   it('verplaatst en draait een instantie als geheel', () => {
     const a = store().addBeam(4, [1, 0, 0], alongX);
     const b = store().addBeam(4, [-1, 0, 0], alongX);
@@ -441,6 +469,58 @@ describe('assemblies', () => {
 });
 
 describe('touwen', () => {
+  it('selecteert alleen zichtbare onderdelen en bouwgroepen van de actieve stap', () => {
+    const beamId = store().addBeam(4, [0, 0, 0], alongX);
+    const beam = store().project.beams[0];
+    const project = newProject('Stapselectie');
+    project.steps = [
+      { index: 0, title: 'Tijdelijk', temporary: true, includeContext: true },
+      { index: 1, title: 'Bouwen' },
+      { index: 2, title: 'Verwijderen' },
+      { index: 3, title: 'Later' },
+    ];
+    project.beams = [
+      { ...beam, id: 'temporary', stepIndex: 0 },
+      { ...beam, id: beamId, stepIndex: 1 },
+      { ...beam, id: 'removed', stepIndex: 1, removedAtStep: 1 },
+      { ...beam, id: 'removing', stepIndex: 1, removedAtStep: 2 },
+      { ...beam, id: 'future', stepIndex: 3 },
+    ];
+    project.lashings = project.beams.map((item) => ({
+      id: `knot:${item.id}`, name: 'mastworp', beamIds: [item.id],
+      localOffset: [0, 0, 0], ropeLengthM: 1, stepIndex: item.stepIndex,
+      removedAtStep: item.removedAtStep,
+    }));
+    project.ropes = project.beams.map((item) => ({
+      id: `rope:${item.id}`, name: 'Touw', fromKnotId: `knot:${item.id}`,
+      toKnotId: `knot:${item.id}`, stepIndex: item.stepIndex, removedAtStep: item.removedAtStep,
+    }));
+    project.assemblyInstances = project.beams.map((item) => ({
+      id: `instance:${item.id}`, defId: 'def', position: item.position,
+      quaternion: item.quaternion, stepIndex: item.stepIndex, removedAtStep: item.removedAtStep,
+    }));
+    store().loadProject(project);
+    store().loadLibrary({ defs: [{ id: 'def', name: 'Bouwgroep', beams: [beam], lashings: [] }] });
+    store().addContextObject('tree', [0, 0, 0]);
+    const contextId = store().project.contextObjects[0].id;
+    store().setPreviewStep(2);
+    store().selectAll();
+
+    expect(store().selectedBeamIds).toEqual([beamId, 'removing', `instance:${beamId}:${beamId}`, `instance:removing:${beamId}`]);
+    expect(store().selectedLashingIds).toEqual([`knot:${beamId}`, 'knot:removing']);
+    expect(store().selectedRopeIds).toEqual([`rope:${beamId}`, 'rope:removing']);
+    expect(store().selectedInstanceIds).toEqual([`instance:${beamId}`, 'instance:removing']);
+    expect(store().selectedContextObjectIds).toEqual([]);
+
+    store().setPreviewStep(0);
+    store().selectAll();
+    expect(store().selectedBeamIds).toEqual(['temporary', `instance:temporary:${beamId}`]);
+    expect(store().selectedLashingIds).toEqual(['knot:temporary']);
+    expect(store().selectedRopeIds).toEqual(['rope:temporary']);
+    expect(store().selectedInstanceIds).toEqual(['instance:temporary']);
+    expect(store().selectedContextObjectIds).toEqual([contextId]);
+  });
+
   it('selecteert alle objecttypen tegelijk', () => {
     const a = store().addBeam(4, [0, 0, 0], alongX);
     const b = store().addBeam(4, [0, 5, 0], alongX);

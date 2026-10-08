@@ -651,9 +651,10 @@ export const useEditor = create<EditorState>()(
         s.project.beams = s.project.beams.filter((b) => !beamIds.has(b.id));
 
         const instanceIds = new Set(s.selectedInstanceIds);
+        const activeInstanceIds = new Set(s.project.assemblyInstances.map((i) => i.id));
         for (const bId of s.selectedBeamIds) {
           const colonIdx = bId.indexOf(':');
-          if (colonIdx !== -1) {
+          if (colonIdx !== -1 && activeInstanceIds.has(bId.slice(0, colonIdx))) {
             instanceIds.add(bId.slice(0, colonIdx));
           }
         }
@@ -769,13 +770,24 @@ export const useEditor = create<EditorState>()(
 
     selectAll: () => {
       const state = get();
-      const model = resolveModel(state.project, state.library);
+      const model = resolveModel(state.project, state.library, state.previewStep, state.previewStep !== null);
+      const visible = (item: { temporary: boolean; stepIndex: number }) =>
+        !item.temporary || item.stepIndex === state.previewStep;
+      const beams = model.beams.filter(visible);
+      const lashings = model.lashings.filter(visible);
+      const ropes = model.ropes.filter(visible);
+      const instanceIds = new Set(
+        [...beams, ...lashings, ...ropes].flatMap((item) => item.instanceId ? [item.instanceId] : []),
+      );
+      const includeContext = state.previewStep === null ||
+        (state.project.steps.find((step) => step.index === state.previewStep)?.includeContext ?? false);
       set((s) => {
-        s.selectedBeamIds = model.beams.map((beam) => beam.id);
-        s.selectedLashingIds = model.lashings.map((lashing) => lashing.id);
-        s.selectedInstanceIds = state.project.assemblyInstances.map((instance) => instance.id);
-        s.selectedRopeIds = model.ropes.map((rope) => rope.id);
-        s.selectedContextObjectIds = state.project.contextObjects.map((item) => item.id);
+        s.selectedBeamIds = beams.map((beam) => beam.id);
+        s.selectedLashingIds = lashings.map((lashing) => lashing.id);
+        s.selectedInstanceIds = state.project.assemblyInstances
+          .filter((instance) => instanceIds.has(instance.id)).map((instance) => instance.id);
+        s.selectedRopeIds = ropes.map((rope) => rope.id);
+        s.selectedContextObjectIds = includeContext ? state.project.contextObjects.map((item) => item.id) : [];
       });
     },
 
