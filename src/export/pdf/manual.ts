@@ -176,7 +176,7 @@ function withoutSceneHelpers<T>(scene: Scene, render: () => T, includeContext = 
   const hidden: Object3D[] = [];
   scene.traverse((object) => {
     if (
-      (object.name === 'grid' || object.name === 'measurement-overlay' ||
+      (object.name === 'grid' || object.name === 'measurement-overlay' || object.name === 'editor-helper' ||
         (!includeContext &&
           (object.name === 'ground' || object.name === 'context-object' || object.name === 'georeference-context'))) &&
       object.visible

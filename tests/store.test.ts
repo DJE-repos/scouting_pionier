@@ -5,6 +5,8 @@ import { newProject } from '../src/model/defaults';
 import { beamEndpoints, beamLocalToWorld, quaternionFromDirection, toQuat } from '../src/model/geometry';
 import { resolveModel } from '../src/model/resolve';
 import { computeBillOfMaterials } from '../src/export/billOfMaterials';
+import { pickBeam } from '../src/model/beamPlacement';
+import { buildIfc } from '../src/export/ifc/ifcExport';
 
 const store = () => useEditor.getState();
 const alongX = toQuat(quaternionFromDirection(new Vector3(1, 0, 0)));
@@ -30,6 +32,226 @@ describe('balken', () => {
     const beam = store().project.beams[0];
     expect(beam.lengthM).toBe(8);
     expect(beamEndpoints(beam)[0].x).toBeCloseTo(-2);
+  });
+});
+
+describe('reference placement', () => {
+  function place(linked = true) {
+    const first = store().addBeam(4, [0, 2, 0]);
+    const second = store().addBeam(4, [3, 2, 0]);
+    const sources = store().project.beams;
+    store().setPendingLength(4);
+    store().updatePlacementDraft({
+      picks: sources.map((beam) => pickBeam(beam, [beam.position[0], 2, -0.04])), linked,
+    });
+    const id = store().placeBeamFromReferences()!;
+    return { first, second, id };
+  }
+  it('creates beam and automatic lashings in one undo action', () => {
+    const { id } = place();
+    expect(id).toBeTruthy();
+    expect(store().project.lashings).toHaveLength(2);
+    expect(store().project.lashings[0].ropeLengthM).toBe(8);
+    store().undo();
+    expect(store().project.beams).toHaveLength(2);
+    expect(store().project.lashings).toHaveLength(0);
+    store().redo();
+    expect(store().project.lashings).toHaveLength(2);
+  });
+  it('places automatically on the second picked support, with one undo checkpoint', () => {
+    store().addBeam(4, [0, 2, 0]);
+    store().addBeam(4, [3, 2, 0]);
+    const sources = store().project.beams;
+    store().setPendingLength(4);
+    const picks = sources.map((beam) => pickBeam(beam, [beam.position[0], 2, -0.04]));
+    const history = store().past.length;
+    store().updatePlacementDraft({ picks: [picks[0]] }, true);
+    expect(store().project.beams).toHaveLength(2);
+    expect(store().past).toHaveLength(history);
+    store().updatePlacementDraft({ picks }, true);
+    expect(store().project.beams).toHaveLength(3);
+    expect(store().project.lashings).toHaveLength(2);
+    expect(store().pendingLengthM).toBeNull();
+    expect(store().past).toHaveLength(history + 1);
+    store().undo();
+    expect(store().project.beams).toHaveLength(2);
+    expect(store().project.lashings).toHaveLength(0);
+  });
+  it('places automatically when a direction is picked after one support', () => {
+    const id = store().addBeam(4, [0, 2, 0]);
+    const beam = store().project.beams.find((item) => item.id === id)!;
+    store().setPendingLength(4);
+    store().updatePlacementDraft({ picks: [pickBeam(beam, [0, 2, -0.04])] }, true);
+    store().updatePlacementDraft({ target: [3, 2, 0] }, true);
+    expect(store().project.beams).toHaveLength(2);
+    expect(store().project.lashings).toHaveLength(1);
+    expect(store().pendingLengthM).toBeNull();
+  });
+  it('does not automatically place when the second support is out of reach', () => {
+    store().addBeam(4, [0, 2, 0]);
+    store().addBeam(4, [5, 2, 0]);
+    store().setPendingLength(4);
+    const picks = store().project.beams.map((beam) => pickBeam(beam, [beam.position[0], 2, -0.04]));
+    const history = store().past.length;
+    store().updatePlacementDraft({ picks }, true);
+    expect(store().project.beams).toHaveLength(2);
+    expect(store().project.lashings).toHaveLength(0);
+    expect(store().pendingLengthM).toBe(4);
+    expect(store().past).toHaveLength(history);
+  });
+  it('places automatically once an invalid contact offset is corrected', () => {
+    store().addBeam(4, [0, 2, 0]);
+    store().addBeam(4, [3, 2, 0]);
+    store().setPendingLength(4);
+    const picks = store().project.beams.map((beam) => pickBeam(beam, [beam.position[0], 2, -0.04]));
+    store().updatePlacementDraft({ picks, offsetM: -0.5 }, true);
+    expect(store().project.beams).toHaveLength(2);
+    store().updatePlacementDraft({ offsetM: 0 }, true);
+    expect(store().project.beams).toHaveLength(3);
+    expect(store().project.lashings).toHaveLength(2);
+    expect(store().pendingLengthM).toBeNull();
+  });
+  it('refits only linked dependents and unlinks without a jump', () => {
+    const { first, second, id } = place();
+    store().transformBeam(first, [-1, 2, 0], [0, 0, 0, 1]);
+    const beam = () => resolveModel(store().project, store().library).beams.find((item) => item.id === id)!;
+    expect(beam().position[0]).toBeCloseTo(1);
+    expect(store().project.beams.find((item) => item.id === second)!.position[0]).toBe(3);
+    const before = beam().position;
+    store().unlinkBeam(id);
+    expect(beam().position).toEqual(before);
+    store().transformBeam(first, [0, 2, 0], [0, 0, 0, 1]);
+    expect(beam().position).toEqual(before);
+    expect(store().project.lashings).toHaveLength(2);
+  });
+  it('does not make automatic lashings imply live links', () => {
+    const { first, id } = place(false);
+    store().transformBeam(first, [-1, 2, 0], [0, 0, 0, 1]);
+    expect(resolveModel(store().project, store().library).beams.find((item) => item.id === id)!.position[0]).toBeCloseTo(1.5);
+  });
+  it('reports impossible refits without stretching and recovers', () => {
+    const { first, id } = place();
+    store().transformBeam(first, [-3, 2, 0], [0, 0, 0, 1]);
+    const beam = () => resolveModel(store().project, store().library).beams.find((item) => item.id === id)!;
+    expect(beam().placementError).toContain('langer');
+    expect(beam().lengthM).toBe(4);
+    store().transformBeam(first, [0, 2, 0], [0, 0, 0, 1]);
+    expect(beam().placementError).toBeUndefined();
+  });
+  it('creates levels without moving existing members', () => {
+    const { id } = place();
+    const before = store().project.beams.find((beam) => beam.id === id)!.position;
+    store().addReferenceLevel('Deck', 2);
+    const levelId = store().activeLevelId!;
+    store().updateReferenceLevel(levelId, { elevationM: 3 });
+    expect(store().project.beams.find((beam) => beam.id === id)!.position).toEqual(before);
+    store().removeReferenceLevel(levelId);
+    expect(store().activeLevelId).toBeNull();
+  });
+  it('detaches dependents when a support is deleted and supports undo', () => {
+    const { first, id } = place();
+    store().transformBeam(first, [-1, 2, 0], [0, 0, 0, 1]);
+    const before = resolveModel(store().project, store().library).beams.find((beam) => beam.id === id)!.position;
+    store().setSelection([first]);
+    store().deleteSelected();
+    const remaining = resolveModel(store().project, store().library).beams.find((beam) => beam.id === id)!;
+    expect(remaining.position).toEqual(before);
+    expect(remaining.placement?.linked).not.toBe(true);
+    store().undo();
+    expect(resolveModel(store().project, store().library).beams.find((beam) => beam.id === id)!.placement?.linked).toBe(true);
+  });
+  it('detaches the live constraint when an automatic knot is removed', () => {
+    const { id } = place();
+    store().select('lashing', store().project.lashings[0].id, false);
+    store().deleteSelected();
+    expect(resolveModel(store().project, store().library).beams.find((beam) => beam.id === id)!.placement?.linked).not.toBe(true);
+    expect(store().project.beams).toHaveLength(3);
+  });
+  it('preserves earlier step links when unlinking in a later step', () => {
+    const { first, id } = place();
+    store().addStep('Move support');
+    store().transformBeam(first, [-1, 2, 0], [0, 0, 0, 1]);
+    const earlier = () => resolveModel(store().project, store().library, 0).beams.find((beam) => beam.id === id)!;
+    const later = () => resolveModel(store().project, store().library, 1).beams.find((beam) => beam.id === id)!;
+    expect(later().position[0]).toBeCloseTo(1);
+    store().unlinkBeam(id);
+    expect(earlier().placement?.linked).toBe(true);
+    expect(earlier().position[0]).toBeCloseTo(1.5);
+    expect(later().placement?.linked).not.toBe(true);
+    expect(later().position[0]).toBeCloseTo(1);
+  });
+  it('resolves malformed cycles safely without mutating stored geometry', () => {
+    const { first, id } = place();
+    const linked = store().project.beams.find((beam) => beam.id === id)!;
+    store().updateBeam(first, { placement: { ...linked.placement!, picks: [pickBeam(linked, linked.position)], target: [0, 2, 0] } });
+    const stored = JSON.stringify(store().project);
+    const model = resolveModel(store().project, store().library);
+    expect(model.beams.find((beam) => beam.id === id)!.placementError).toContain('Cyclische');
+    expect(JSON.stringify(store().project)).toBe(stored);
+  });
+  it('preserves internal assembly links and bakes external-only selections', () => {
+    const { id } = place();
+    store().setSelection(store().project.beams.map((beam) => beam.id));
+    store().saveSelectionAsAssembly('Linked frame');
+    const def = store().library.defs[0];
+    const dependent = def.beams.find((beam) => beam.placement?.linked)!;
+    expect(dependent).toBeTruthy();
+    expect(dependent.placement!.picks.every((pick) => def.beams.some((beam) => beam.id === pick.beamId))).toBe(true);
+    store().addAssemblyInstance(def.id, [8, 0, 0]);
+    const expanded = resolveModel(store().project, store().library).beams.filter((beam) => beam.instanceId);
+    expect(expanded.find((beam) => beam.placement?.linked)?.placementError).toBeUndefined();
+    store().setSelection([id]);
+    store().saveSelectionAsAssembly('Single beam');
+    expect(store().library.defs[1].beams[0].placement).toBeUndefined();
+  });
+  it('passes resolved linked geometry and stock quantities to exports', () => {
+    const { first, id } = place();
+    store().transformBeam(first, [-1, 2, 0], [0, 0, 0, 1]);
+    store().addReferenceLevel('Deck', 2);
+    const model = resolveModel(store().project, store().library);
+    expect(model.beams.find((beam) => beam.id === id)!.position[0]).toBeCloseTo(1);
+    const materials = computeBillOfMaterials(model);
+    expect(materials.totalBeams).toBe(3);
+    expect(materials.totalBeamLengthM).toBe(12);
+    expect(materials.totalKnots).toBe(2);
+    const ifc = buildIfc(store().project, model);
+    expect(ifc.match(/IFCBEAM\(/g)).toHaveLength(3);
+    expect(ifc.match(/IFCMECHANICALFASTENER\(/g)).toHaveLength(2);
+  });
+  it('refits a chain of explicitly linked dependents', () => {
+    const { first, id } = place();
+    const source = resolveModel(store().project, store().library).beams.find((beam) => beam.id === id)!;
+    store().setPendingLength(3);
+    store().updatePlacementDraft({
+      picks: [pickBeam(source, [1.5, 2.04, -0.08])], target: [1.5, 2, 3], linked: true,
+    });
+    const dependentId = store().placeBeamFromReferences();
+    expect(dependentId).toBeTruthy();
+    const dependent = () => resolveModel(store().project, store().library).beams.find((beam) => beam.id === dependentId)!;
+    const before = dependent().position;
+    store().transformBeam(first, [-1, 2, 0], [0, 0, 0, 1]);
+    expect(dependent().placementError).toBeUndefined();
+    expect(dependent().position).not.toEqual(before);
+  });
+  it('keeps instance-supported links valid through movement and explosion', () => {
+    store().addBeam(4, [0, 2, 0]);
+    store().saveSelectionAsAssembly('Post');
+    store().addAssemblyInstance(store().library.defs[0].id, [0, 2, 0]);
+    const instanceId = store().project.assemblyInstances[0].id;
+    const second = store().addBeam(4, [3, 2, 0]);
+    const model = resolveModel(store().project, store().library);
+    const sources = [model.beams.find((beam) => beam.instanceId === instanceId)!, model.beams.find((beam) => beam.id === second)!];
+    store().setPendingLength(4);
+    store().updatePlacementDraft({ picks: sources.map((beam) => pickBeam(beam, [beam.position[0], 2, -0.04])), linked: true });
+    const id = store().placeBeamFromReferences()!;
+    expect(id).toBeTruthy();
+    store().transformInstance(instanceId, [-1, 2, 0], [0, 0, 0, 1]);
+    const before = resolveModel(store().project, store().library).beams.find((beam) => beam.id === id)!;
+    expect(before.position[0]).toBeCloseTo(1);
+    store().explodeInstance(instanceId);
+    const after = resolveModel(store().project, store().library).beams.find((beam) => beam.id === id)!;
+    expect(after.position).toEqual(before.position);
+    expect(after.placementError).toBeUndefined();
   });
 });
 

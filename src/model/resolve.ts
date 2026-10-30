@@ -1,4 +1,5 @@
 import { Quaternion, Vector3 } from 'three';
+import { solveBeamPlacement } from './beamPlacement';
 import type {
   AssemblyDef,
   AssemblyInstance,
@@ -19,6 +20,7 @@ import {
 } from './geometry';
 
 export interface ResolvedBeam extends Beam {
+  placementError?: string;
   /** Gezet wanneer de balk uit een assembly-instantie komt (niet los bewerkbaar). */
   instanceId?: string;
   assemblyName?: string;
@@ -72,6 +74,19 @@ export function instantiate(
     };
   });
 
+  for (const beam of beams) {
+    const remapPlacement = (placement: NonNullable<Beam['placement']>) => ({
+      ...placement,
+      picks: placement.picks.map((pick) => ({ ...pick, beamId: idMap.get(pick.beamId) ?? pick.beamId })),
+      target: placement.target ? toVec3(new Vector3(...placement.target).applyQuaternion(rotation).add(offset)) : undefined,
+    });
+    if (beam.placement) beam.placement = remapPlacement(beam.placement);
+    beam.stepTransforms = beam.stepTransforms?.map((transform) => ({
+      ...transform,
+      placement: transform.placement ? remapPlacement(transform.placement) : transform.placement,
+    }));
+  }
+
   const rawRopes = (def.ropes ?? []).map((r) => {
     const id = `${instance.id}:${r.id}`;
     ropeIdMap.set(r.id, id);
@@ -88,6 +103,7 @@ export function instantiate(
     return {
       ...l,
       id,
+      placementBeamId: l.placementBeamId ? idMap.get(l.placementBeamId) : undefined,
       beamIds: l.beamIds.map((bid) => idMap.get(bid) ?? bid),
       ropeIds: l.ropeIds?.map((rid) => ropeIdMap.get(rid) ?? rid),
       stepIndex: instance.stepIndex,
@@ -125,11 +141,15 @@ export function resolveStepTransform<
   upToStep: number | null,
 ): T {
   const transform = latestTransform(item.stepTransforms, upToStep);
+  const placementTransform = item.stepTransforms
+    ?.filter((entry) => (upToStep === null || entry.stepIndex <= upToStep) && entry.placement !== undefined)
+    .sort((a, b) => b.stepIndex - a.stepIndex)[0];
   if (!transform) return item;
   return {
     ...item,
     position: transform.position ?? item.position,
     quaternion: transform.quaternion ?? item.quaternion,
+    ...(placementTransform ? { placement: placementTransform.placement ?? undefined } : {}),
   };
 }
 
@@ -167,6 +187,46 @@ export function resolveModel(
     );
     lashings.push(...expanded.lashings.map((l) => ({ ...mark(l), removedAtStep: instance.removedAtStep ?? l.removedAtStep, temporaryMeasure: def.temporaryMeasure || l.temporaryMeasure, instanceId: instance.id })));
     rawRopes.push(...expanded.ropes.map((r) => ({ ...mark(r), removedAtStep: instance.removedAtStep ?? r.removedAtStep, temporaryMeasure: def.temporaryMeasure || r.temporaryMeasure, instanceId: instance.id })));
+  }
+
+  const beamMap = new Map(beams.map((beam) => [beam.id, beam]));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const placementContacts = new Map<string, ReturnType<typeof solveBeamPlacement>['contacts']>();
+  const resolvePlacement = (beam: ResolvedBeam): void => {
+    if (visited.has(beam.id)) return;
+    if (visiting.has(beam.id)) { beam.placementError = 'Cyclische balkkoppeling.'; return; }
+    if (!beam.placement?.linked) { visited.add(beam.id); return; }
+    visiting.add(beam.id);
+    for (const pick of beam.placement.picks) {
+      const source = beamMap.get(pick.beamId);
+      if (!source || (upToStep !== null && (source.stepIndex > upToStep ||
+          (source.removedAtStep !== undefined && source.removedAtStep <= upToStep)))) {
+        beam.placementError = 'Steunbalk ontbreekt in deze bouwstap.';
+        break;
+      }
+      resolvePlacement(source);
+      if (source.placementError) { beam.placementError = source.placementError; break; }
+    }
+    if (!beam.placementError) {
+      const result = solveBeamPlacement(beam.lengthM, beam.diameterMm, beam.placement, beams);
+      if (result.error) beam.placementError = result.error;
+      else {
+        beam.position = result.position;
+        beam.quaternion = result.quaternion;
+        placementContacts.set(beam.id, result.contacts);
+      }
+    }
+    visiting.delete(beam.id);
+    visited.add(beam.id);
+  };
+  beams.forEach(resolvePlacement);
+  for (const lashing of lashings) {
+    if (!lashing.placementBeamId) continue;
+    const contacts = placementContacts.get(lashing.placementBeamId);
+    const contact = contacts?.find((item) => lashing.beamIds.includes(item.beamId));
+    const anchor = beamMap.get(lashing.beamIds[0]);
+    if (contact && anchor) lashing.localOffset = worldToBeamLocal(anchor, new Vector3(...contact.position));
   }
 
   const knotPositionMap = new Map<string, Vector3>();

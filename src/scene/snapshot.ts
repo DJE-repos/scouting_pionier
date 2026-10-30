@@ -26,8 +26,16 @@ export function getCanvasHandle(): CanvasHandle | null {
 /** Rendert de huidige scene opnieuw en geeft een PNG data-URL terug. */
 export function captureView(): string | null {
   if (!handle) return null;
-  handle.gl.render(handle.scene, handle.camera);
-  return handle.gl.domElement.toDataURL('image/png');
+  const hidden: { visible: boolean }[] = [];
+  handle.scene.traverse((object) => {
+    if (object.name === 'editor-helper' && object.visible) { object.visible = false; hidden.push(object); }
+  });
+  try {
+    handle.gl.render(handle.scene, handle.camera);
+    return handle.gl.domElement.toDataURL('image/png');
+  } finally {
+    for (const object of hidden) object.visible = true;
+  }
 }
 
 /** Kijkrichting van de huidige camera, van het model naar de camera toe. */

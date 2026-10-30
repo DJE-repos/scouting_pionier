@@ -6,6 +6,8 @@ import type {
   AssemblyInstance,
   AssemblyLibrary,
   Beam,
+  BeamPlacement,
+  ReferenceLevel,
   CapturedStepView,
   ContextObject,
   Lashing,
@@ -27,6 +29,7 @@ import {
   worldToRopeLocal,
 } from '../model/geometry';
 import { instantiate, resolveModel } from '../model/resolve';
+import { solveBeamPlacement } from '../model/beamPlacement';
 
 export { instantiate } from '../model/resolve';
 
@@ -58,6 +61,11 @@ interface EditorState {
 
   /** Lengte gekozen in het palet; zolang gezet plaatst een klik een nieuwe balk. */
   pendingLengthM: number | null;
+  placementMode: 'ground' | 'supports';
+  placementDraft: BeamPlacement;
+  activeLevelId: string | null;
+  levelAlignment: 'center' | 'top' | 'bottom';
+  showLevels: boolean;
   pendingContextObjectType: ContextObject['type'] | null;
   lengthAnchor: LengthAnchor;
   transformMode: TransformMode;
@@ -78,6 +86,16 @@ interface EditorState {
 
   // --- acties ---
   addBeam: (lengthM: number, position: Vec3, quaternion?: Quat) => string;
+  setPlacementMode: (mode: 'ground' | 'supports') => void;
+  updatePlacementDraft: (patch: Partial<BeamPlacement>, placeWhenReady?: boolean) => void;
+  placeBeamFromReferences: () => string | null;
+  unlinkBeam: (id: string) => void;
+  addReferenceLevel: (name: string, elevationM: number) => void;
+  updateReferenceLevel: (id: string, patch: Partial<ReferenceLevel>) => void;
+  removeReferenceLevel: (id: string) => void;
+  setActiveLevel: (id: string | null) => void;
+  setLevelAlignment: (alignment: 'center' | 'top' | 'bottom') => void;
+  setShowLevels: (show: boolean) => void;
   updateBeam: (id: string, patch: Partial<Beam>) => void;
   setBeamLength: (id: string, lengthM: number) => void;
   transformBeam: (id: string, position: Vec3, quaternion: Quat) => void;
@@ -147,6 +165,7 @@ interface EditorState {
 const HISTORY_LIMIT = 100;
 const clone = <T,>(value: T): T => structuredClone(value);
 const IDENTITY_Q: Quat = [0, 0, 0, 1];
+const emptyPlacement = (): BeamPlacement => ({ picks: [], offsetM: 0, anchor: 'center', linked: false });
 
 function setStepTransform<T extends { stepTransforms?: StepTransform[] }>(
   item: T,
@@ -168,6 +187,11 @@ export const useEditor = create<EditorState>()(
     selectedContextObjectIds: [],
 
     pendingLengthM: null,
+    placementMode: 'ground',
+    placementDraft: emptyPlacement(),
+    activeLevelId: null,
+    levelAlignment: 'bottom',
+    showLevels: true,
     pendingContextObjectType: null,
     lengthAnchor: 'center',
     transformMode: 'translate',
@@ -262,6 +286,100 @@ export const useEditor = create<EditorState>()(
       });
     },
 
+    setPlacementMode: (mode) => set((s) => {
+      s.placementMode = mode;
+      s.placementDraft.picks = [];
+      s.placementDraft.target = undefined;
+    }),
+    updatePlacementDraft: (patch, placeWhenReady = false) => {
+      set((s) => { Object.assign(s.placementDraft, patch); });
+      if (placeWhenReady) get().placeBeamFromReferences();
+    },
+    setActiveLevel: (id) => set((s) => {
+      s.activeLevelId = id;
+      s.placementDraft.picks = [];
+      s.placementDraft.target = undefined;
+    }),
+    setLevelAlignment: (alignment) => set((s) => { s.levelAlignment = alignment; }),
+    setShowLevels: (show) => set((s) => { s.showLevels = show; }),
+    addReferenceLevel: (name, elevationM) => {
+      if (!name.trim() || !Number.isFinite(elevationM)) return;
+      get().commit();
+      set((s) => {
+        const id = crypto.randomUUID();
+        (s.project.referenceLevels ??= []).push({ id, name: name.trim(), elevationM });
+        s.activeLevelId = id;
+        s.placementDraft.picks = [];
+        s.placementDraft.target = undefined;
+      });
+    },
+    updateReferenceLevel: (id, patch) => {
+      if (patch.elevationM !== undefined && !Number.isFinite(patch.elevationM)) return;
+      if (patch.name !== undefined && !patch.name.trim()) return;
+      get().commit();
+      set((s) => {
+        const level = s.project.referenceLevels?.find((item) => item.id === id);
+        if (level) Object.assign(level, { ...patch, id });
+        if (id === s.activeLevelId && patch.elevationM !== undefined) {
+          s.placementDraft.picks = [];
+          s.placementDraft.target = undefined;
+        }
+      });
+    },
+    removeReferenceLevel: (id) => {
+      get().commit();
+      set((s) => {
+        s.project.referenceLevels = s.project.referenceLevels?.filter((item) => item.id !== id);
+        if (s.activeLevelId === id) {
+          s.activeLevelId = null;
+          s.placementDraft.picks = [];
+          s.placementDraft.target = undefined;
+        }
+      });
+    },
+    placeBeamFromReferences: () => {
+      const state = get();
+      if (state.pendingLengthM === null || state.animationTimeStep !== null) return null;
+      const model = resolveModel(state.project, state.library, state.previewStep);
+      const level = state.project.referenceLevels?.find((item) => item.id === state.activeLevelId);
+      const radius = state.project.settings.defaultDiameterMm / 2000;
+      const levelCenterY = level ? level.elevationM + (state.levelAlignment === 'bottom' ? radius : state.levelAlignment === 'top' ? -radius : 0) : undefined;
+      const result = solveBeamPlacement(state.pendingLengthM, state.project.settings.defaultDiameterMm, state.placementDraft, model.beams, levelCenterY);
+      if (result.error) return null;
+      const id = crypto.randomUUID();
+      state.commit();
+      set((s) => {
+        const beam: Beam = {
+          id, lengthM: state.pendingLengthM!, diameterMm: s.project.settings.defaultDiameterMm,
+          position: result.position, quaternion: result.quaternion, stepIndex: currentStep(s),
+          placement: { ...clone(state.placementDraft), picks: result.picks ?? clone(state.placementDraft.picks) },
+        };
+        s.project.beams.push(beam);
+        for (const contact of result.contacts) {
+          s.project.lashings.push({
+            id: crypto.randomUUID(), name: contact.name, beamIds: [id, contact.beamId],
+            placementBeamId: id, localOffset: worldToBeamLocal(beam, new Vector3(...contact.position)),
+            ropeLengthM: ropeLengthFor(contact.name, s.project.settings), color: '#e11d48', stepIndex: currentStep(s),
+          });
+        }
+        s.selectedBeamIds = [id];
+        s.selectedLashingIds = [];
+        s.selectedInstanceIds = [];
+        s.selectedRopeIds = [];
+        s.selectedContextObjectIds = [];
+        s.pendingLengthM = null;
+        s.placementDraft = emptyPlacement();
+      });
+      return id;
+    },
+    unlinkBeam: (id) => {
+      const state = get();
+      const resolved = resolveModel(state.project, state.library, state.previewStep).beams.find((beam) => beam.id === id);
+      if (!resolved?.placement?.linked || resolved.instanceId) return;
+      state.commit();
+      set((s) => bakeBeam(s, id, resolved.position, resolved.quaternion));
+    },
+
     addBeam: (lengthM, position, quaternion = IDENTITY_Q) => {
       const id = crypto.randomUUID();
       get().commit();
@@ -278,6 +396,7 @@ export const useEditor = create<EditorState>()(
         s.selectedLashingIds = [];
         s.selectedInstanceIds = [];
         s.selectedRopeIds = [];
+        s.selectedContextObjectIds = [];
       });
       return id;
     },
@@ -305,6 +424,8 @@ export const useEditor = create<EditorState>()(
       set((s) => {
         const beam = s.project.beams.find((b) => b.id === id);
         if (!beam) return;
+        const effective = resolveModel(s.project, s.library, s.previewStep).beams.find((item) => item.id === id);
+        if (effective?.placement?.linked) return;
         const stepIndex = currentStep(s);
         if (stepIndex === 0) {
           beam.position = position;
@@ -488,10 +609,15 @@ export const useEditor = create<EditorState>()(
       const instance = state.project.assemblyInstances.find((i) => i.id === id);
       const def = instance && state.library.defs.find((d) => d.id === instance.defId);
       if (!instance || !def) return;
+      const current = resolveModel(state.project, state.library, state.previewStep);
       state.commit();
       set((s) => {
         const { beams, lashings, ropes } = instantiate(def, instance);
-        s.project.beams.push(...beams.map((beam) => ({ ...beam, temporaryMeasure: def.temporaryMeasure || beam.temporaryMeasure })));
+        s.project.beams.push(...beams.map((beam) => {
+          const resolved = current.beams.find((item) => item.id === beam.id);
+          return { ...beam, position: resolved?.position ?? beam.position, quaternion: resolved?.quaternion ?? beam.quaternion,
+            placement: resolved?.placement, temporaryMeasure: def.temporaryMeasure || beam.temporaryMeasure };
+        }));
         s.project.lashings.push(...lashings.map((lashing) => ({ ...lashing, temporaryMeasure: def.temporaryMeasure || lashing.temporaryMeasure })));
         if (!s.project.ropes) s.project.ropes = [];
         s.project.ropes.push(...ropes.map((rope) => ({ ...rope, temporaryMeasure: def.temporaryMeasure || rope.temporaryMeasure })));
@@ -505,7 +631,7 @@ export const useEditor = create<EditorState>()(
 
     saveSelectionAsAssembly: (name, temporaryMeasure = false) => {
       const state = get();
-      const model = resolveModel(state.project, state.library);
+      const model = resolveModel(state.project, state.library, state.previewStep);
       const beams = model.beams.filter((b) => state.selectedBeamIds.includes(b.id));
       if (beams.length === 0) return;
       const ids = new Set(beams.map((b) => b.id));
@@ -540,9 +666,20 @@ export const useEditor = create<EditorState>()(
           stepIndex: 0,
           temporaryMeasure: b.temporaryMeasure,
           removedAtStep: b.removedAtStep,
-          stepTransforms: b.stepTransforms,
+          stepTransforms: undefined,
         };
       });
+
+      for (let index = 0; index < newBeams.length; index++) {
+        const placement = beams[index].placement;
+        if (placement?.linked && placement.picks.every((pick) => ids.has(pick.beamId))) {
+          newBeams[index].placement = {
+            ...placement,
+            picks: placement.picks.map((pick) => ({ ...pick, beamId: idMap.get(pick.beamId)! })),
+            target: placement.target ? toVec3(new Vector3(...placement.target).sub(center)) : undefined,
+          };
+        }
+      }
 
       const ropeIdMap = new Map<string, string>();
       const newRopes: Rope[] = ropes.map((r) => {
@@ -568,6 +705,7 @@ export const useEditor = create<EditorState>()(
         knotIdMap.set(l.id, newKnotId);
         return {
           id: newKnotId,
+          placementBeamId: l.placementBeamId ? idMap.get(l.placementBeamId) : undefined,
           name: l.name,
           beamIds: l.beamIds.map((bid) => idMap.get(bid) ?? bid),
           ropeIds: l.ropeIds?.map((rid) => ropeIdMap.get(rid) ?? rid),
@@ -606,6 +744,13 @@ export const useEditor = create<EditorState>()(
         const removedInstanceIds = new Set(
           s.project.assemblyInstances.filter((i) => i.defId === id).map((i) => i.id),
         );
+        const current = resolveModel(s.project, s.library, s.previewStep);
+        const removedSources = new Set(current.beams.filter((beam) => beam.instanceId && removedInstanceIds.has(beam.instanceId)).map((beam) => beam.id));
+        for (const beam of current.beams) {
+          if (beam.placement?.linked && beam.placement.picks.some((pick) => removedSources.has(pick.beamId))) {
+            bakeBeam(s, beam.id, beam.position, beam.quaternion);
+          }
+        }
         s.library.defs = s.library.defs.filter((d) => d.id !== id);
         s.project.assemblyInstances = s.project.assemblyInstances.filter((i) => i.defId !== id);
 
@@ -646,6 +791,23 @@ export const useEditor = create<EditorState>()(
         return;
       state.commit();
       set((s) => {
+        const modelBefore = resolveModel(s.project, s.library, s.previewStep);
+        const removedInstances = new Set(s.selectedInstanceIds);
+        for (const id of s.selectedBeamIds) {
+          const beam = modelBefore.beams.find((item) => item.id === id);
+          if (beam?.instanceId) removedInstances.add(beam.instanceId);
+        }
+        const removedSources = new Set([
+          ...s.selectedBeamIds,
+          ...modelBefore.beams.filter((beam) => beam.instanceId && removedInstances.has(beam.instanceId)).map((beam) => beam.id),
+        ]);
+        const unlinkedByKnot = new Set(s.project.lashings.filter((lashing) => s.selectedLashingIds.includes(lashing.id))
+          .flatMap((lashing) => lashing.placementBeamId ? [lashing.placementBeamId] : []));
+        for (const beam of modelBefore.beams) {
+          if (beam.placement?.linked && (unlinkedByKnot.has(beam.id) || beam.placement.picks.some((pick) => removedSources.has(pick.beamId)))) {
+            bakeBeam(s, beam.id, beam.position, beam.quaternion);
+          }
+        }
         if (!s.project.ropes) s.project.ropes = [];
         const beamIds = new Set(s.selectedBeamIds);
         s.project.beams = s.project.beams.filter((b) => !beamIds.has(b.id));
@@ -812,13 +974,25 @@ export const useEditor = create<EditorState>()(
     setPendingLength: (lengthM) =>
       set((s) => {
         s.pendingLengthM = lengthM;
-        if (lengthM !== null) s.pendingContextObjectType = null;
+        s.placementDraft.picks = [];
+        s.placementDraft.target = undefined;
+        if (lengthM !== null) {
+          s.pendingContextObjectType = null;
+          s.measurementMode = null;
+          s.boxSelectMode = false;
+          s.animationTimeStep = null;
+        }
       }),
 
     setPendingContextObjectType: (type) =>
       set((s) => {
         s.pendingContextObjectType = type;
-        if (type !== null) s.pendingLengthM = null;
+        if (type !== null) {
+          s.pendingLengthM = null;
+          s.placementDraft = emptyPlacement();
+          s.measurementMode = null;
+          s.measurementPoints = [];
+        }
       }),
 
     setLengthAnchor: (anchor) =>
@@ -849,6 +1023,8 @@ export const useEditor = create<EditorState>()(
 
     setPreviewStep: (step) =>
       set((s) => {
+        s.pendingLengthM = null;
+        s.placementDraft = emptyPlacement();
         s.previewStep = step;
         s.cameraFocusRequest += 1;
         s.animationTimeStep = null;
@@ -857,10 +1033,14 @@ export const useEditor = create<EditorState>()(
       }),
     setAnimationTimeStep: (step) =>
       set((s) => {
+        s.pendingLengthM = null;
+        s.placementDraft = emptyPlacement();
         s.animationTimeStep = step;
       }),
     setMeasurementMode: (mode) =>
       set((s) => {
+        s.pendingLengthM = null;
+        s.placementDraft = emptyPlacement();
         s.measurementMode = mode;
         s.measurementPoints = [];
       }),
@@ -1137,6 +1317,9 @@ export const useEditor = create<EditorState>()(
         s.selectedRopeIds = [];
         s.selectedContextObjectIds = [];
         s.pendingContextObjectType = null;
+        s.pendingLengthM = null;
+        s.placementDraft = emptyPlacement();
+        s.activeLevelId = null;
         s.previewStep = null;
       }),
 
@@ -1156,6 +1339,9 @@ export const useEditor = create<EditorState>()(
         s.selectedRopeIds = [];
         s.selectedContextObjectIds = [];
         s.pendingContextObjectType = null;
+        s.pendingLengthM = null;
+        s.placementDraft = emptyPlacement();
+        s.activeLevelId = null;
       }),
   })),
 );
@@ -1164,7 +1350,22 @@ function currentStep(s: EditorState): number {
   return s.previewStep ?? Math.max(0, s.project.steps.length - 1);
 }
 
+function bakeBeam(s: EditorState, id: string, position: Vec3, quaternion: Quat) {
+  const beam = s.project.beams.find((item) => item.id === id);
+  if (!beam) return;
+  if (currentStep(s) === 0) {
+    beam.position = position;
+    beam.quaternion = quaternion;
+    delete beam.placement;
+  } else {
+    setStepTransform(beam, currentStep(s), { position, quaternion, placement: null });
+  }
+}
+
 function pruneSelection(s: EditorState) {
+  if (!s.project.referenceLevels?.some((level) => level.id === s.activeLevelId)) s.activeLevelId = null;
+  s.pendingLengthM = null;
+  s.placementDraft = emptyPlacement();
   const model = resolveModel(s.project, s.library);
   const beamIds = new Set(model.beams.map((b) => b.id));
   s.selectedBeamIds = s.selectedBeamIds.filter((id) => beamIds.has(id));

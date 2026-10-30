@@ -221,6 +221,31 @@ body,
   gap: 6px;
 }
 
+.placement-controls { margin-top: 16px; }
+.placement-controls input, .placement-controls select { min-width: 0; width: 100%; }
+.placement-controls input[type='checkbox'] { width: auto; }
+.placement-reference, .level-row { border-bottom: 1px solid var(--border); padding: 8px 0; min-width: 0; }
+.placement-reference span { display: block; overflow-wrap: anywhere; font-size: 12px; margin-bottom: 6px; }
+.placement-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.placement-status, .placement-knots { font-size: 12px; margin: 8px 0; overflow-wrap: anywhere; }
+.placement-error { color: #b42318; font-size: 12px; overflow-wrap: anywhere; }
+.level-label { display: inline-block; padding: 3px 6px; border: 1px solid #7dd3fc; background: #f0f9ff; color: #075985; border-radius: 4px; white-space: nowrap; font-size: 11px; }
+.level-form { margin-top: 12px; }
+.beam-links { padding: 10px 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; font-size: 12px; overflow-wrap: anywhere; }
+.beam-links .btn { margin-top: 8px; }
+
+@media (max-width: 760px) {
+  .app { height: auto; min-height: 100%; }
+  .app__body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(360px, 55dvh) auto; }
+  .app__body > .viewport { grid-column: 1 / -1; grid-row: 1; }
+  .panel--left { grid-column: 1; grid-row: 2; min-width: 0; padding: 8px; }
+  .panel--right { grid-column: 2; grid-row: 2; min-width: 0; }
+  .panel-resize-handle { display: none; }
+  .panel .tabs { flex-wrap: wrap; }
+  .panel .length-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .placement-controls .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+}
+
 .context-add-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

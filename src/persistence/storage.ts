@@ -83,6 +83,8 @@ function migrateProject(project: Project): Project {
       ...item,
       stepIndex: remapStepIndex(item.stepIndex),
     })),
+    referenceLevels: (project.referenceLevels ?? []).filter((level) =>
+      typeof level.id === 'string' && typeof level.name === 'string' && Number.isFinite(level.elevationM)),
     assemblyInstances: (project.assemblyInstances ?? []).map((item) => remapItem(item)),
     contextObjects: (project.contextObjects ?? []).map((object) => ({
       ...object,

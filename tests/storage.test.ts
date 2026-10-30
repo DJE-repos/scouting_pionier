@@ -34,6 +34,27 @@ function importedProjectWithoutDeparturePoint() {
 }
 
 describe('projectmigratie', () => {
+  it('round-trips levels and optional beam link recipes', () => {
+    const project = importedProjectWithoutDeparturePoint();
+    project.referenceLevels = [{ id: 'deck', name: 'Deck', elevationM: 2 }];
+    project.beams[0].placement = {
+      picks: [{ beamId: 'support', localPoint: [0, 1, 0], localNormal: [1, 0, 0] }],
+      target: [3, 2, 0], offsetM: 0.1, anchor: 'start', linked: true,
+    };
+    project.beams[0].stepTransforms![0].placement = null;
+    const imported = deserialize(serialize(project, { defs: [] })).project;
+    expect(imported.referenceLevels).toEqual(project.referenceLevels);
+    expect(imported.beams[0].placement).toEqual(project.beams[0].placement);
+    expect(imported.beams[0].stepTransforms![0]).toMatchObject({ stepIndex: 2, placement: null });
+  });
+
+  it('defaults legacy levels and rejects non-finite elevations', () => {
+    const project = newProject();
+    delete project.referenceLevels;
+    expect(deserialize(serialize(project, { defs: [] })).project.referenceLevels).toEqual([]);
+    project.referenceLevels = [{ id: 'bad', name: 'Bad', elevationM: NaN }];
+    expect(deserialize(serialize(project, { defs: [] })).project.referenceLevels).toEqual([]);
+  });
   it('bewaart volledige camera-overrides per stap in het pionierbestand', () => {
     const project = newProject('Camera override');
     project.steps.push({

@@ -8,10 +8,31 @@ export const STANDARD_DIAMETERS_MM = [60, 80, 100, 120] as const;
 /** Anker bij het wijzigen van een balklengte: welk punt blijft staan. */
 export type LengthAnchor = 'start' | 'center' | 'end';
 
+export interface BeamPick {
+  beamId: string;
+  localPoint: Vec3;
+  localNormal: Vec3;
+}
+
+export interface BeamPlacement {
+  picks: BeamPick[];
+  target?: Vec3;
+  offsetM: number;
+  anchor: LengthAnchor;
+  linked: boolean;
+}
+
+export interface ReferenceLevel {
+  id: string;
+  name: string;
+  elevationM: number;
+}
+
 export interface StepTransform {
   stepIndex: number;
   position?: Vec3;
   quaternion?: Quat;
+  placement?: BeamPlacement | null;
 }
 
 export interface Beam {
@@ -30,10 +51,12 @@ export interface Beam {
   /** Stap waarin deze tijdelijke voorziening wordt verwijderd. */
   removedAtStep?: number;
   stepTransforms?: StepTransform[];
+  placement?: BeamPlacement;
 }
 
 export interface Lashing {
   id: string;
+  placementBeamId?: string;
   /** Vrije knoopnaam, bijv. "kruisbond". */
   name: string;
   beamIds: string[];
@@ -188,6 +211,7 @@ export interface Project {
   ropes?: Rope[];
   assemblyInstances: AssemblyInstance[];
   measurements: Measurement[];
+  referenceLevels?: ReferenceLevel[];
   /** Omgevingsobjecten zijn onafhankelijk van de bouwstappen altijd zichtbaar. */
   contextObjects: ContextObject[];
   steps: BuildStep[];

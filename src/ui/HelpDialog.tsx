@@ -98,6 +98,10 @@ export function HelpDialog({ open, onClose, triggerRef }: HelpDialogProps) {
           <HelpSection id="help-model" title="Model opbouwen">
             <h4>Balken plaatsen</h4>
             <p>Kies links een standaardlengte en klik daarna op het maaiveld in de viewport. Klik opnieuw op de actieve lengte of op <strong>Plaatsen annuleren</strong> om de modus te stoppen.</p>
+            <p>Kies <strong>Aan steunbalken</strong> om een balk aan bestaande balken te plaatsen. Stel vooraf de zijwaartse offset, het overstek en de eventuele koppeling in. Klik twee steunbalken aan, of klik een steunbalk en daarna een richting op het referentieniveau. Na het tweede geldige punt worden de balk en passende sjorringen direct geplaatst. De gekozen voorraadlengte blijft behouden. Rood betekent dat de gekozen lengte of contactzijde niet past; pas de instellingen aan of kies <strong>Andere zijde</strong> per steun. Zodra de plaatsing geldig is, wordt de balk automatisch geplaatst.</p>
+            <p>Met <strong>Koppelen aan elementen</strong> blijft de nieuwe balk zijn steunbalken volgen. Alleen de afhankelijke balk wordt opnieuw passend geplaatst; de andere steunen bewegen niet mee. Gebruik <strong>Ontkoppelen</strong> bij Eigenschappen om de huidige positie vast te houden. Knopen blijven dan bestaan. Een gekoppelde balk kun je pas vrij verplaatsen na ontkoppelen.</p>
+            <h4>Referentieniveaus</h4>
+            <p>Maak benoemde horizontale niveaus met een hoogte in meters. Kies een referentieniveau en lijn de onderkant, hartlijn of bovenkant van nieuwe balken daarop uit. Bij steunbalken bepaalt het niveau de gewenste contacthoogte als die op de steun mogelijk is; geldige raakcontacten blijven vereist. Niveaus zijn plaatsingshulpen: een hoogtewijziging verplaatst eerder geplaatste balken niet.</p>
             <h4>Context plaatsen</h4>
             <p>Kies <strong>Gebouw</strong>, <strong>Boom</strong>, <strong>Volwassene</strong> of <strong>Kind</strong> en klik in de grond. Context maakt de omgeving en schaal zichtbaar; het is geen constructieonderdeel.</p>
             <h4>Instellingen</h4>

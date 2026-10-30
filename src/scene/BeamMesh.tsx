@@ -14,6 +14,7 @@ interface Props {
   dimmed?: boolean;
   removing?: boolean;
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void;
+  onPointerMove?: (e: ThreeEvent<PointerEvent>) => void;
 }
 
 const SELECTED = '#38bdf8';
@@ -27,17 +28,19 @@ export function BeamMesh({
   dimmed = false,
   removing = false,
   onPointerDown,
+  onPointerMove,
 }: Props) {
   const radius = beam.diameterMm / 2000;
   const opacity = (dimmed ? 0.12 : removing ? 0.4 : 1) * (beam.animationOpacity ?? 1);
   const position = useMemo(() => new Vector3(...beam.position), [beam.position]);
   const quaternion = useMemo(() => new Quaternion(...beam.quaternion), [beam.quaternion]);
   const color = useMemo(() => {
+    if (beam.placementError) return new Color('#dc2626');
     if (removing) return new Color(REMOVING);
     if (selected) return new Color(SELECTED);
     const base = new Color(beamColorHex(beam.lengthM));
     return muted ? base.multiplyScalar(0.45) : base;
-  }, [removing, selected, muted, beam.lengthM]);
+  }, [removing, selected, muted, beam.lengthM, beam.placementError]);
 
   return (
     <mesh
@@ -47,6 +50,7 @@ export function BeamMesh({
       castShadow={!dimmed}
       receiveShadow={!dimmed}
       onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
     >
       <cylinderGeometry args={[radius, radius, beam.lengthM, 16]} />
       {/* key forceert een nieuw materiaal; three hercompileert de shader niet als `transparent` wisselt. */}

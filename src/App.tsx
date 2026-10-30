@@ -95,8 +95,14 @@ function useKeyboardShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.isContentEditable) return;
       const store = useEditor.getState();
+      if (e.key === 'Escape') {
+        store.setPendingLength(null);
+        store.setPendingContextObjectType(null);
+        store.clearSelection();
+        return;
+      }
+      if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -134,10 +140,6 @@ function useKeyboardShortcuts() {
         case 'delete':
         case 'backspace':
           store.deleteSelected();
-          break;
-        case 'escape':
-          store.setPendingLength(null);
-          store.clearSelection();
           break;
       }
     };

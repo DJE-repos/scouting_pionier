@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { GizmoHelper, GizmoViewport, Grid, OrbitControls, TransformControls } from '@react-three/drei';
-import { Matrix4, Object3D, Quaternion, Vector3 } from 'three';
+import { GizmoHelper, GizmoViewport, Grid, Html, OrbitControls, TransformControls } from '@react-three/drei';
+import { Matrix4, Object3D, Plane, Quaternion, Vector3 } from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useEditor } from '../store/projectStore';
 import { resolveAnimatedModel, resolveModel, resolveStepTransform } from '../model/resolve';
@@ -13,6 +13,7 @@ import {
 } from '../model/views';
 import {
   beamEndpoints,
+  beamAxis,
   beamLocalToWorld,
   isPointInScreenBox,
   isSegmentInScreenBox,
@@ -34,6 +35,9 @@ import { MeasurementToolbar } from '../ui/MeasurementToolbar';
 import { ContextObjects } from './ContextObjects';
 import { GeoContext } from './GeoContext';
 import { StepBanner } from './StepBanner';
+import { pickBeam } from '../model/beamPlacement';
+import { PlacementPreview } from './PlacementPreview';
+import type { Beam, BeamPick } from '../model/types';
 
 export interface DragRect {
   left: number;
@@ -104,6 +108,15 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
   const selectedRopeIds = useEditor((s) => s.selectedRopeIds);
   const selectedContextObjectIds = useEditor((s) => s.selectedContextObjectIds);
   const pendingLengthM = useEditor((s) => s.pendingLengthM);
+  const placementMode = useEditor((s) => s.placementMode);
+  const placementDraft = useEditor((s) => s.placementDraft);
+  const activeLevelId = useEditor((s) => s.activeLevelId);
+  const levelAlignment = useEditor((s) => s.levelAlignment);
+  const showLevels = useEditor((s) => s.showLevels);
+  const updatePlacementDraft = useEditor((s) => s.updatePlacementDraft);
+  const [hoverPick, setHoverPick] = useState<BeamPick | null>(null);
+  const activeLevel = project.referenceLevels?.find((level) => level.id === activeLevelId);
+  const elevation = activeLevel?.elevationM ?? 0;
   const pendingContextObjectType = useEditor((s) => s.pendingContextObjectType);
   const settings = project.settings;
 
@@ -339,14 +352,39 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
         return;
       }
       if (pendingLengthM === null) return;
-      // Nieuwe balk ligt horizontaal in het maaiveld, rustend op de grond.
+      const planePoint = e.ray.intersectPlane(new Plane(new Vector3(0, 1, 0), -elevation), new Vector3());
+      if (!planePoint) return;
+      const point = snapVector(planePoint, settings.gridSnapM);
+      if (placementMode === 'supports') {
+        if (placementDraft.picks.length === 1) updatePlacementDraft({ target: toVec3(point) }, true);
+        return;
+      }
       const q = quaternionFromDirection(new Vector3(1, 0, 0));
-      p.z = settings.defaultDiameterMm / 2000;
-      addBeam(pendingLengthM, toVec3(p), toQuat(q));
+      point.y = elevation + (levelAlignment === 'bottom' ? 1 : levelAlignment === 'top' ? -1 : 0) * settings.defaultDiameterMm / 2000;
+      addBeam(pendingLengthM, toVec3(point), toQuat(q));
       setPendingLength(null);
     },
-    [pendingLengthM, pendingContextObjectType, settings.gridSnapM, settings.defaultDiameterMm, addBeam, addContextObject, setPendingLength, setPendingContextObjectType, clearSelection, gizmoHasPointer, handleMeasurementPoint],
+    [pendingLengthM, pendingContextObjectType, settings.gridSnapM, settings.defaultDiameterMm, addBeam, addContextObject, setPendingLength, setPendingContextObjectType, clearSelection, gizmoHasPointer, handleMeasurementPoint, elevation, levelAlignment, placementMode, placementDraft.picks.length, updatePlacementDraft],
   );
+
+  const supportPick = (beam: Beam, point: Vector3) => {
+    const pick = pickBeam(beam, toVec3(point));
+    if (activeLevel) {
+      const desiredY = elevation + (levelAlignment === 'bottom' ? 1 : levelAlignment === 'top' ? -1 : 0) * settings.defaultDiameterMm / 2000;
+      const axis = beamAxis(beam);
+      if (Math.abs(axis.y) < 1e-6) {
+        if (Math.abs(beam.position[1] - desiredY) > (beam.diameterMm + settings.defaultDiameterMm) / 2000 + 0.005) return null;
+      } else {
+        const axial = (desiredY - beam.position[1]) / axis.y;
+        if (Math.abs(axial) > beam.lengthM / 2) return null;
+        pick.localPoint = [0, axial, 0];
+      }
+    }
+    return pick;
+  };
+  const hoverPlacement = placementDraft.picks.length === 1 && hoverPick && hoverPick.beamId !== placementDraft.picks[0].beamId
+    ? { ...placementDraft, picks: [...placementDraft.picks, hoverPick], target: undefined }
+    : placementDraft;
 
   // Voorgebouwde onderdelen (tussenstappen) horen alleen bij hun eigen stap en zijn daarbuiten verborgen.
   const isHidden = (item: { stepIndex: number; temporary: boolean }) =>
@@ -389,6 +427,22 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
       <GeoContext visible={includeContext} />
       <StepBanner step={bannerStep} visible={animationTimeStep !== null} />
 
+      {animationTimeStep === null && (pendingLengthM !== null || (showLevels && activeLevel)) && <group name="editor-helper">
+        <mesh position={[0, elevation, 0]} rotation={[-Math.PI / 2, 0, 0]}
+          onPointerDown={pendingLengthM !== null ? handleGroundDown : undefined}
+          onPointerMove={() => setHoverPick(null)}>
+          <planeGeometry args={[settings.groundSizeM, settings.groundSizeM]} />
+          <meshBasicMaterial color="#0284c7" transparent opacity={showLevels && activeLevel ? 0.08 : 0} depthWrite={false} />
+        </mesh>
+        {showLevels && activeLevel && <Html position={[0, elevation, 0]} style={{ pointerEvents: 'none' }}>
+          <span className="level-label">{activeLevel.name} · {elevation} m</span>
+        </Html>}
+      </group>}
+      {pendingLengthM !== null && placementMode === 'supports' && placementDraft.picks.length > 0 && <PlacementPreview
+        lengthM={pendingLengthM} diameterMm={settings.defaultDiameterMm} placement={hoverPlacement} beams={model.beams}
+        levelCenterY={activeLevel ? elevation + (levelAlignment === 'bottom' ? 1 : levelAlignment === 'top' ? -1 : 0) * settings.defaultDiameterMm / 2000 : undefined}
+      />}
+
       <mesh
         name="ground"
         rotation={[-Math.PI / 2, 0, 0]}
@@ -426,6 +480,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             key={beam.id}
             beam={beam}
             selected={
+              placementDraft.picks.some((pick) => pick.beamId === beam.id) ||
               selectedBeamIds.includes(beam.id) ||
               (beam.instanceId ? selectedInstanceIds.includes(beam.instanceId) : false)
             }
@@ -435,10 +490,23 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             removing={isRemoving(beam)}
             onPointerDown={(e) => {
               if (handleMeasurementPoint(e.point)) { e.stopPropagation(); return; }
+              if (pendingLengthM !== null && placementMode === 'supports' && !gizmoHasPointer()) {
+                e.stopPropagation();
+                if (isDimmed(beam) || isRemoving(beam) || placementDraft.picks.length >= 2 || placementDraft.picks.some((pick) => pick.beamId === beam.id)) return;
+                const pick = supportPick(beam, e.point);
+                if (pick) updatePlacementDraft({ picks: [...placementDraft.picks, pick], target: undefined }, true);
+                setHoverPick(null);
+                return;
+              }
               if (pendingLengthM !== null || gizmoHasPointer()) return;
               if (useEditor.getState().boxSelectMode) return;
               e.stopPropagation();
               select('beam', beam.id, e.shiftKey);
+            }}
+            onPointerMove={(e) => {
+              if (pendingLengthM === null || placementMode !== 'supports' || placementDraft.picks.length !== 1 || isDimmed(beam) || isRemoving(beam)) return;
+              e.stopPropagation();
+              setHoverPick(supportPick(beam, e.point));
             }}
           />
         ),
@@ -457,6 +525,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             removing={isRemoving(lashing)}
             onPointerDown={(e) => {
               if (handleMeasurementPoint(e.point)) { e.stopPropagation(); return; }
+              if (pendingLengthM !== null) return;
               if (gizmoHasPointer()) return;
               if (useEditor.getState().boxSelectMode) return;
               e.stopPropagation();
@@ -476,6 +545,7 @@ function Scene({ onDragRectChange }: { onDragRectChange: (rect: DragRect | null)
             highlighted={isNew(rope.stepIndex)}
             onPointerDown={(e) => {
               if (handleMeasurementPoint(e.point)) { e.stopPropagation(); return; }
+              if (pendingLengthM !== null) return;
               if (gizmoHasPointer()) return;
               if (useEditor.getState().boxSelectMode) return;
               e.stopPropagation();
@@ -631,7 +701,7 @@ function TransformGizmo({
 
   const resolvedBeam = beamId ? model.beams.find((b) => b.id === beamId) : null;
   const looseBeam =
-    resolvedBeam && !resolvedBeam.instanceId
+    resolvedBeam && !resolvedBeam.instanceId && !resolvedBeam.placement?.linked
       ? resolvedBeam
       : null;
 
@@ -700,7 +770,7 @@ function TransformGizmo({
     .filter((item) => selectedInstanceIdSet.has(item.id))
     .map((item) => resolveStepTransform(item, previewStep));
   const groupBeams = model.beams.filter(
-    (beam) => !beam.instanceId && selectedBeamIds.includes(beam.id),
+    (beam) => !beam.instanceId && !beam.placement?.linked && selectedBeamIds.includes(beam.id),
   );
   const groupTargets = [...groupBeams, ...groupInstances];
   const selectionCount =
@@ -711,8 +781,14 @@ function TransformGizmo({
   const isGroup = groupTargets.length > 1 || (groupTargets.length > 0 && selectionCount > 1);
 
   const targetItem = looseBeam ?? resolvedInstance ?? contextObject;
+  const selectedRoots = new Set([
+    ...selectedBeamIds,
+    ...model.beams.filter((beam) => beam.instanceId && selectedInstanceIdSet.has(beam.instanceId)).map((beam) => beam.id),
+  ]);
+  const hasConflictingLink = model.beams.some((beam) => selectedBeamIds.includes(beam.id) && beam.placement?.linked &&
+    beam.placement.picks.some((pick) => !selectedRoots.has(pick.beamId)));
 
-  if (animationTimeStep !== null || boxSelectMode || (!isGroup && !targetItem && !lashingPosition)) return null;
+  if (hasConflictingLink || animationTimeStep !== null || useEditor.getState().pendingLengthM !== null || boxSelectMode || (!isGroup && !targetItem && !lashingPosition)) return null;
 
   if (!dragging.current) {
     if (isGroup) {

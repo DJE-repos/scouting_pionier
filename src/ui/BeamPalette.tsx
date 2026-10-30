@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from 
 import { STANDARD_DIAMETERS_MM, STANDARD_LENGTHS } from '../model/types';
 import { beamColorHex } from '../model/beamColors';
 import { imageryUrl, placeLabelsUrl } from '../scene/GeoContext';
+import { PlacementControls } from './PlacementControls';
 
 function GeoMiniMap({ x, y, size, onPick }: { x: number; y: number; size: number; onPick: (x: number, y: number) => void }) {
   const [zoom, setZoom] = useState(1);
@@ -102,7 +103,6 @@ export function BeamPalette() {
   return (
     <aside className="panel panel--left">
       <h2>Balken plaatsen</h2>
-      <p className="hint">Kies een lengte en klik in de grond.</p>
       <div className="length-grid">
         {STANDARD_LENGTHS.map((len) => (
           <button
@@ -120,6 +120,8 @@ export function BeamPalette() {
           Plaatsen annuleren
         </button>
       )}
+
+      <PlacementControls />
 
       <h2>Context plaatsen</h2>
       <p className="hint">Kies een object en klik in de grond.</p>

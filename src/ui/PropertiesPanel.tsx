@@ -20,6 +20,8 @@ export function PropertiesPanel() {
   const selectedContextObjectIds = useEditor((s) => s.selectedContextObjectIds);
   const project = useEditor((s) => s.project);
   const library = useEditor((s) => s.library);
+  const previewStep = useEditor((s) => s.previewStep);
+  const unlinkBeam = useEditor((s) => s.unlinkBeam);
   const lengthAnchor = useEditor((s) => s.lengthAnchor);
   const setLengthAnchor = useEditor((s) => s.setLengthAnchor);
   const setBeamLength = useEditor((s) => s.setBeamLength);
@@ -33,7 +35,7 @@ export function PropertiesPanel() {
 
   const [knotDialogOpen, setKnotDialogOpen] = useState(false);
 
-  const model = useMemo(() => resolveModel(project, library), [project, library]);
+  const model = useMemo(() => resolveModel(project, library, previewStep), [project, library, previewStep]);
   const selectedBeams = model.beams.filter((b) => selectedBeamIds.includes(b.id));
   const looseBeams = project.beams.filter((b) => selectedBeamIds.includes(b.id));
   const selectedLooseLashings = project.lashings.filter((l) => selectedLashingIds.includes(l.id));
@@ -84,6 +86,13 @@ export function PropertiesPanel() {
       {selectedBeams.length > 0 && (
         <section>
           <h3>{selectedBeams.length === 1 ? 'Balk' : `${selectedBeams.length} balken`}</h3>
+
+          {selectedBeams.filter((beam) => beam.placement?.linked).map((beam) => <div className="beam-links" key={beam.id}>
+            <strong>Gekoppeld aan elementen</strong>
+            {beam.placement!.picks.map((pick) => <div key={pick.beamId}>{model.beams.find((item) => item.id === pick.beamId)?.name || pick.beamId.slice(0, 8)}</div>)}
+            {beam.placementError && <p className="placement-error" role="alert">{beam.placementError}</p>}
+            {!beam.instanceId && <button className="btn" onClick={() => unlinkBeam(beam.id)}>Ontkoppelen</button>}
+          </div>)}
 
           <div style={{ marginBottom: 12 }}>
             <button className="btn btn--primary" onClick={() => setKnotDialogOpen(true)}>

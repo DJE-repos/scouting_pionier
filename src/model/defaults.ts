@@ -15,6 +15,8 @@ export const KNOT_SUGGESTIONS = [
 /** Richtwaarden voor touwverbruik per knoopsoort (meter). */
 export const DEFAULT_ROPE_LENGTHS: Record<string, number> = {
   kruissjorring: 8,
+  diagonaalsjorring: 8,
+  steigersjorring: 8,
   diagonaalbond: 8,
   schoorbond: 6,
   driepootbond: 12,
@@ -54,6 +56,7 @@ export const newProject = (name = 'Nieuw pionierproject'): Project => ({
   ropes: [],
   assemblyInstances: [],
   measurements: [],
+  referenceLevels: [],
   contextObjects: [],
   steps: [{ index: 0, title: 'Vertrekpunt', includeContext: true }],
   settings: defaultSettings(),

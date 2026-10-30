@@ -19,6 +19,11 @@ npm run build    # productiebuild in dist/
 | Actie | Hoe |
 | --- | --- |
 | Balk plaatsen | Kies een lengte (1–8 m) links en klik op de grond |
+| Aan balken plaatsen | Kies **Aan steunbalken** en een voorraadlengte; stel vooraf offset en overstek in. Na het tweede geldige steunpunt worden balk en sjorringen direct geplaatst |
+| Aan een balk plaatsen | Kies een steunbalk en daarna een richting op het referentieniveau; na het tweede geldige punt wordt de balk direct geplaatst |
+| Elementen koppelen | Vink **Koppelen aan elementen** aan bij plaatsing; alleen de afhankelijke balk volgt wijzigingen van zijn steunen |
+| Ontkoppelen | Selecteer de gekoppelde balk en kies **Ontkoppelen** in Eigenschappen; positie en knopen blijven behouden |
+| Niveaus | Voeg een naam en hoogte toe bij **Referentieniveaus**, selecteer het niveau en kies onderkant, hartlijn of bovenkant |
 | Selecteren | Klik op een balk; shift+klik voor meerdere |
 | Verplaatsen / draaien | `G` / `R`, daarna de gizmo slepen (snapt op raster en hoek) |
 | Lengte wijzigen | Rechterpaneel → kies maat of vrije lengte; het *lengte-anker* bepaalt welk uiteinde blijft staan |
@@ -28,6 +33,16 @@ npm run build    # productiebuild in dist/
 | Ongedaan maken | `Ctrl+Z` / `Ctrl+Shift+Z` |
 
 ## Panelen rechts
+
+Bij plaatsing aan steunbalken worden sjorringen automatisch op echte raakcontacten gemaakt.
+De geometrie bepaalt een eerste keuze (kruis-, diagonaal- of steigersjorring); naam en touwlengte
+blijven bewerkbaar. Dit is geen constructieve veiligheidsbeoordeling. Een offset die een spleet
+of doorsnijding veroorzaakt, of een overspanning groter dan de voorraadlengte, blokkeert plaatsing.
+Een later ongeldige koppeling wordt in Eigenschappen gemeld zonder de balk te verlengen.
+De zijwaartse offset geldt voor beide plaatsingspunten, loodrecht op hun horizontale richting;
+de pijl in de preview toont de positieve richting. Niveaus zijn uitsluitend plaatsingsreferenties:
+wijzigen of verwijderen van een niveau verplaatst bestaande balken niet. Niveaus en koppelingen
+worden samen met het project opgeslagen; niveaus tellen niet mee als materiaal.
 
 - **Eigenschappen** — maten, diameter, knoopnaam, touwlengte, kleur
 - **Materiaal** — automatische materiaalstaat (balken per maat, touw per knoopsoort), tijdelijke maatregelen als losse categorie + CSV-export
